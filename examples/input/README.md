@@ -60,24 +60,24 @@ The `input()` builtin is the convenient case.
 Interactive:
 
 ```
-¿Cómo te llamás?
+What is your name?
 Arcis                        ← user types this
-Hola, Arcis!
-Contame algo:
-hola mundo
-Me dijiste: "hola mundo"
-Tu frase tiene 10 caracteres.
+Hello, Arcis!
+Say something:
+hello world
+You said: "hello world"
+Your phrase has 11 characters.
 ```
 
-Piped (`printf "Arcis\nhola mundo\n" | …`):
+Piped (`printf "Arcis\nhello world\n" | …`):
 
 ```
-¿Cómo te llamás?
-Hola, Arcis!
+What is your name?
+Hello, Arcis!
 
-Contame algo:
-Me dijiste: "hola mundo"
-Tu frase tiene 10 caracteres.
+Say something:
+You said: "hello world"
+Your phrase has 11 characters.
 ```
 
 ## Notes

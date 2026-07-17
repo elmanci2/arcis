@@ -72,23 +72,23 @@ identifier or a more complex expression.
 ## Expected output
 
 ```
-toUpperCase: HOLA MUNDO
-toLowerCase: hola mundo
-trim: 'hola'
-substring(0,4): Hola
-substring(5): Mundo
-indexOf('Mundo'): 5
+toUpperCase: HELLO WORLD
+toLowerCase: hello world
+trim: 'hello'
+substring(0,4): Hello
+substring(5): World
+indexOf('World'): 5
 indexOf('xyz'): -1
-includes('Mundo'): true
+includes('World'): true
 includes('xyz'): false
 charAt(0): H
-charAt(5): M
+charAt(5): W
 charAt(99): ''
-Suma for-of: 100
-Sin el 20: 3
-Encontrado: 30
-Normalizado: 'hola'
-¿contiene 'hola'? true
+for-of sum: 100
+Without 20: 3
+Found: 30
+Normalized: 'hello'
+Contains 'hello'? true
 ```
 
 ## Notes
@@ -101,5 +101,5 @@ Normalizado: 'hola'
 
 - [`examples/arrays/`](../arrays/) — the array methods that pair
   naturally with string iteration.
-- [`examples/tier2/`](../tier2/) — C-style `for` loops as an
+- [`examples/loops/`](../loops/) — C-style `for` loops as an
   alternative to `for-of`.

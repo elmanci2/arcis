@@ -125,7 +125,7 @@ hola!!!
 
 ## Related examples
 
-- [`examples/completo/`](../completo/) — the kitchen-sink single-file
+- [`examples/complete/`](../complete/) — the kitchen-sink single-file
   program.
 - [`examples/05-files/`](../05-files/) — `sys.*` builtins for
   filesystem access from inside a module.

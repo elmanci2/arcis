@@ -1,38 +1,38 @@
-// completo.tsr — demo de todo lo implementado en el lenguaje Arcis
-// Cubre: let/const, funciones, if/else, print, reasignación,
-// recursión, operadores aritméticos, de comparación y lógicos,
-// strings con concatenación, booleanos, números, comentarios.
+// complete.tsr — kitchen-sink demo of everything Arcis implements
+// Covers: let/const, functions, if/else, print, reassignment,
+// recursion, arithmetic / comparison / logical operators, string
+// concatenation, booleans, numbers, comments.
 
-// 1. Variables con y sin tipo explícito
-let nombre: string = "Lenguaje";
+// 1. Variables with and without explicit type annotations
+let name: string = "Language";
 let version: number = 2026;
-let activo: boolean = true;
-let pi = 3.14;  // tipo inferido del literal
+let active: boolean = true;
+let pi = 3.14;  // inferred type from the literal
 
-// 2. Constantes (convención MAYÚSCULAS como en TS)
-const LIMITE: number = 100;
-const SALUDO: string = "Hola";
+// 2. Constants (UPPER_CASE convention, as in TS)
+const LIMIT: number = 100;
+const GREETING: string = "Hello";
 
-// 3. Función simple
-function duplicar(x: number): number {
+// 3. Simple function
+function double(x: number): number {
     return x * 2;
 }
 
-// 4. Función con if/else
-function clasificar(n: number): string {
+// 4. Function with if/else
+function classify(n: number): string {
     if (n < 0) {
-        return "negativo";
+        return "negative";
     } else {
-        
+
         if (n == 0) {
-            return "cero";
+            return "zero";
         } else {
-            return "positivo";
+            return "positive";
         }
     }
 }
 
-// 5. Función recursiva: factorial
+// 5. Recursive function: factorial
 function factorial(n: number): number {
     if (n <= 1) {
         return 1;
@@ -41,85 +41,85 @@ function factorial(n: number): number {
     }
 }
 
-// 6. Función booleana con varios parámetros y lógica
-function esMayorDeEdad(edad: number, minimo: number): boolean {
-    return edad >= minimo && edad > 0;
+// 6. Boolean function with several parameters and logic
+function isOfAge(age: number, minimum: number): boolean {
+    return age >= minimum && age > 0;
 }
 
-// 7. Operador lógico AND con comparación
-function aprueba(nota: number): boolean {
-    return nota >= 70 && nota <= 100;
+// 7. Logical AND combined with comparison
+function passes(grade: number): boolean {
+    return grade >= 70 && grade <= 100;
 }
 
-// 8. Negación unaria
-function esInvalido(x: number): boolean {
+// 8. Unary negation
+function isInvalid(x: number): boolean {
     return !(x >= 0 && x <= 100);
 }
 
-// 9. Módulo aritmético
-function esPar(n: number): boolean {
+// 9. Arithmetic modulo
+function isEven(n: number): boolean {
     return n % 2 == 0;
 }
 
-// === Programa principal ===
+// === Main program ===
 
-print(SALUDO + " " + nombre);
-print("Versión: " + version);
-print("Activo: " + activo);
+print(GREETING + " " + name);
+print("Version: " + version);
+print("Active: " + active);
 print("PI: " + pi);
-print("Límite: " + LIMITE);
+print("Limit: " + LIMIT);
 
-// Llamadas a funciones simples
-let doble: number = duplicar(21);
-print("Duplicar 21 = " + doble);
+// Calls to simple functions
+let doubled: number = double(21);
+print("Double 21 = " + doubled);
 
 // If/else
-let clase: string = clasificar(-5);
-print("-5 es: " + clase);
+let kind: string = classify(-5);
+print("-5 is: " + kind);
 
-clase = clasificar(0);
-print("0 es: " + clase);
+kind = classify(0);
+print("0 is: " + kind);
 
-clase = clasificar(42);
-print("42 es: " + clase);
+kind = classify(42);
+print("42 is: " + kind);
 
-// Recursión
+// Recursion
 let fact5: number = factorial(5);
 print("5! = " + fact5);
 
 let fact10: number = factorial(10);
 print("10! = " + fact10);
 
-// Booleanos
-let mayor: boolean = esMayorDeEdad(25, 18);
-print("¿25 es mayor de 18? " + mayor);
+// Booleans
+let ofAge: boolean = isOfAge(25, 18);
+print("Is 25 of age 18? " + ofAge);
 
-mayor = esMayorDeEdad(15, 18);
-print("¿15 es mayor de 18? " + mayor);
+ofAge = isOfAge(15, 18);
+print("Is 15 of age 18? " + ofAge);
 
-let ok: boolean = aprueba(85);
-print("¿Aprueba con 85? " + ok);
+let ok: boolean = passes(85);
+print("Passes with 85? " + ok);
 
-let invalido: boolean = esInvalido(150);
-print("¿150 es inválido? " + invalido);
+let invalid: boolean = isInvalid(150);
+print("Is 150 invalid? " + invalid);
 
-let par: boolean = esPar(8);
-print("¿8 es par? " + par);
+let even: boolean = isEven(8);
+print("Is 8 even? " + even);
 
-par = esPar(7);
-print("¿7 es par? " + par);
+even = isEven(7);
+print("Is 7 even? " + even);
 
-// Reasignación
-let contador: number = 0;
-contador = contador + 1;
-contador = contador * 10;
-print("Contador final: " + contador);
+// Reassignment
+let counter: number = 0;
+counter = counter + 1;
+counter = counter * 10;
+print("Final counter: " + counter);
 
-// Comentario de bloque de varias líneas
-/* Esto demuestra
-   que los comentarios
-   de bloque funcionan. */
+// Multi-line block comment
+/* This demonstrates
+   that block comments
+   work correctly. */
 
-// Concatenación múltiple
-let msg: string = "Doble: " + doble + " / Fact5: " + fact5;
+// Multiple concatenation
+let msg: string = "Double: " + doubled + " / Fact5: " + fact5;
 print(msg);

@@ -132,12 +132,12 @@ arcis run examples/<folder>/<file>.tsr
 | [`examples/05-files/`](examples/05-files/README.md)               | `files.tsr`           | `sys.*` filesystem builtins (`readFile`, `writeFile`, `mkdir`, `listDir`, etc.) |
 | [`examples/arrays/`](examples/arrays/README.md)                   | `arrays.tsr`          | Arrays and the seven method builtins (`find` / `filter` / `map` / `reduce` / …) |
 | [`examples/strings/`](examples/strings/README.md)                 | `strings.tsr`         | All seven string methods + `for-of` iteration over arrays                       |
-| [`examples/objetos/`](examples/objetos/README.md)                 | `objetos.tsr`         | Object literals, inline object types, field access, arrays of objects           |
-| [`examples/reasignacion/`](examples/reasignacion/README.md)       | `reasignacion.tsr`    | Reassigning `let` bindings (variables, swap, strings)                           |
-| [`examples/tier2/`](examples/tier2/README.md)                     | `tier2.tsr`           | `while` / `for` / `break` / `continue`, nested loops, `.length` on strings        |
-| [`examples/input/`](examples/input/README.md)                     | `input.tsr`           | The `input()` builtin (reads one line of stdin)                                 |
-| [`examples/completo/`](examples/completo/README.md)               | `completo.tsr`        | A single-file kitchen-sink program that uses most features                       |
-| [`examples/mods/`](examples/mods/README.md)                       | `main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
+| [`examples/object/`](examples/object/README.md)                 | `object.tsr`          | Object literals, inline object types, field access, arrays of objects           |
+| [`examples/reassignment/`](examples/reassignment/README.md)     | `reassignment.tsr`   | Reassigning `let` bindings (variables, swap, strings)                           |
+| [`examples/loops/`](examples/loops/README.md)                   | `loops.tsr`          | `while` / `for` / `break` / `continue`, nested loops, `.length` on strings        |
+| [`examples/input/`](examples/input/README.md)                   | `input.tsr`          | The `input()` builtin (reads one line of stdin)                                 |
+| [`examples/complete/`](examples/complete/README.md)             | `complete.tsr`       | A single-file kitchen-sink program that uses most features                       |
+| [`examples/mods/`](examples/mods/README.md)                     | `main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
 
 ## Modules
 

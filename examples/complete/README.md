@@ -1,4 +1,4 @@
-# `completo.tsr` — kitchen-sink: everything in one file
+# `complete.tsr` — kitchen-sink: everything in one file
 
 A single-file program that exercises **most** of Arcis's features at
 once: variables, constants, functions, recursion, conditionals,
@@ -8,12 +8,12 @@ booleans, and comments.
 ## Run it
 
 ```bash
-arcis run examples/completo/completo.tsr
+arcis run examples/complete/complete.tsr
 ```
 
 ## What it covers
 
-Almost everything — see the section dividers in `completo.tsr`:
+Almost everything — see the section dividers in `complete.tsr`:
 
 1. Variables with and without type annotations.
 2. Constants (UPPER_CASE by convention).
@@ -35,28 +35,28 @@ exercise the full pipeline (lexer → parser → codegen → rustc) on
 non-trivial inputs. If a change to any phase breaks something, this
 file is the first thing to break.
 
-## Expected output (excerpt)
+## Expected output
 
 ```
-Hola Lenguaje
-Versión: 2026
-Activo: true
+Hello Language
+Version: 2026
+Active: true
 PI: 3.14
-Límite: 100
-Duplicar 21 = 42
--5 es: negativo
-0 es: cero
-42 es: positivo
+Limit: 100
+Double 21 = 42
+-5 is: negative
+0 is: zero
+42 is: positive
 5! = 120
 10! = 3628800
-¿25 es mayor de 18? true
-¿15 es mayor de 18? false
-¿Aprueba con 85? true
-¿150 es inválido? true
-¿8 es par? true
-¿7 es par? false
-Contador final: 10
-Doble: 42 / Fact5: 120
+Is 25 of age 18? true
+Is 15 of age 18? false
+Passes with 85? true
+Is 150 invalid? true
+Is 8 even? true
+Is 7 even? false
+Final counter: 10
+Double: 42 / Fact5: 120
 ```
 
 ## Notes

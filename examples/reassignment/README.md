@@ -1,4 +1,4 @@
-# `reasignacion.tsr` — rebinding `let` variables
+# `reassignment.tsr` — rebinding `let` variables
 
 Demonstrates that `let` bindings can be reassigned in Arcis. The
 codegen decides whether to emit `let` or `let mut` based on whether
@@ -7,7 +7,7 @@ the variable is ever reassigned.
 ## Run it
 
 ```bash
-arcis run examples/reasignacion/reasignacion.tsr
+arcis run examples/reassignment/reassignment.tsr
 ```
 
 ## What it covers
@@ -52,9 +52,9 @@ Adios
 
 - The codegen also flags arrays/objects whose fields are
   reassigned (`arr[i] = v`, `obj.x = v`) and marks the binding as
-  `mut`. See [`examples/objetos/`](../objetos/).
+  `mut`. See [`examples/object/`](../object/).
 
 ## Related examples
 
 - [`examples/02-basics/`](../02-basics/) — `let` vs `const`.
-- [`examples/objetos/`](../objetos/) — field reassignment.
+- [`examples/object/`](../object/) — field reassignment.

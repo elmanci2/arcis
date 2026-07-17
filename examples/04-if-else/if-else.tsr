@@ -1,4 +1,4 @@
-// 04_if_else.tsr — `if` / `else if` / `else` chains.
+// 04-if-else.tsr — `if` / `else if` / `else` chains.
 //
 // Covers:
 //   - Plain `if`
@@ -14,7 +14,7 @@
 
 let temperature: number = 25;
 if (temperature > 30) {
-    print("Hace calor");
+    print("It's hot");
 }
 
 // ============================================================
@@ -23,9 +23,9 @@ if (temperature > 30) {
 
 let age: number = 17;
 if (age >= 18) {
-    print("Mayor de edad");
+    print("Adult");
 } else {
-    print("Menor de edad");
+    print("Minor");
 }
 
 // ============================================================
@@ -56,12 +56,12 @@ let loggedIn: boolean = true;
 
 if (loggedIn) {
     if (user == "admin") {
-        print("Bienvenido, administrador");
+        print("Welcome, administrator");
     } else {
-        print("Bienvenido, usuario");
+        print("Welcome, user");
     }
 } else {
-    print("Por favor, iniciá sesión");
+    print("Please log in");
 }
 
 // ============================================================
@@ -86,23 +86,23 @@ print("access granted? " + accessGranted);
 
 function describe(n: number): string {
     if (n < 0) {
-        return "negativo";
+        return "negative";
     } else if (n == 0) {
-        return "cero";
+        return "zero";
     } else if (n < 10) {
-        return "pequeño positivo";
+        return "small positive";
     } else if (n < 100) {
-        return "mediano";
+        return "medium";
     } else {
-        return "grande";
+        return "large";
     }
 }
 
-print(describe(-5));     // negativo
-print(describe(0));      // cero
-print(describe(7));      // pequeño positivo
-print(describe(42));     // mediano
-print(describe(500));    // grande
+print(describe(-5));     // negative
+print(describe(0));      // zero
+print(describe(7));      // small positive
+print(describe(42));     // medium
+print(describe(500));    // large
 
 // ============================================================
 // 7. `if` as a one-line guard

@@ -1,4 +1,4 @@
-# `tier2.tsr` — loops: `while`, `for`, `for-of`, `break`, `continue`
+# `loops.tsr` — loops: `while`, `for`, `for-of`, `break`, `continue`
 
 The classic control-flow constructs: C-style `while` and `for`
 loops, plus `for-of` over arrays.
@@ -6,7 +6,7 @@ loops, plus `for-of` over arrays.
 ## Run it
 
 ```bash
-arcis run examples/tier2/tier2.tsr
+arcis run examples/loops/loops.tsr
 ```
 
 ## What it covers
@@ -62,16 +62,16 @@ the codegen emits `.into_iter()` because the standard library's
 ## Expected output (excerpt)
 
 ```
-contador = 1
-contador = 2
-contador = 3
-contador = 4
-contador = 5
-Primer múltiplo de 7 >= 100: 105
-Suma de impares del 1 al 10: 25
+counter = 1
+counter = 2
+counter = 3
+counter = 4
+counter = 5
+First multiple of 7 >= 100: 105
+Sum of odds from 1 to 10: 25
 7! = 5040
 7 * 6 = 42
-Coordenadas 3x3:
+3x3 coordinates:
 (0,0) (0,1) (0,2)
 (1,0) (1,1) (1,2)
 (2,0) (2,1) (2,2)

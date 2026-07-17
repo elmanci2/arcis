@@ -54,14 +54,14 @@ logical operators, function calls, even chained method calls like
 
 ```
 Score 85 → grade B
-Bienvenido, administrador
+Welcome, administrator
 can drive? true
 access granted? true
-negativo
-cero
-pequeño positivo
-mediano
-grande
+negative
+zero
+small positive
+medium
+large
 cannot divide by zero
 ```
 
@@ -76,6 +76,6 @@ cannot divide by zero
 
 ## Related examples
 
-- [`examples/tier2/`](../tier2/) — loops with `break` and `continue`.
+- [`examples/loops/`](../loops/) — loops with `break` and `continue`.
 - [`examples/03-functions/`](../03-functions/) — branching inside
   function bodies.

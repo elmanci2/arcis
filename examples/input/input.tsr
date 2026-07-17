@@ -1,22 +1,23 @@
-// input.tsr — ejemplo del builtin `input()`.
+// input.tsr — example of the `input()` builtin.
 //
-// `input()` lee una línea de stdin y la devuelve como `string`, sin el `\n`
-// final (hace `trim_end()` automáticamente). Es bloqueante, sin args.
+// `input()` reads one line of stdin and returns it as a `string`, with
+// no trailing `\n` (it does `trim_end()` automatically). It is blocking
+// and takes no arguments.
 //
-// Uso interactivo:
-//   $ arcis run examples/input.tsr
-//   ¿Cómo te llamás? Arcis        ← el usuario escribe y presiona Enter
-//   Hola, Arcis!
+// Interactive use:
+//   $ arcis run examples/input/input.tsr
+//   What is your name? Arcis        ← the user types and presses Enter
+//   Hello, Arcis!
 //
-// Uso piped:
-//   $ printf "Arcis\nhola mundo\n" | arcis run examples/input.tsr
+// Piped use:
+//   $ printf "Arcis\nhello world\n" | arcis run examples/input/input.tsr
 
-print("¿Cómo te llamás?");
-let nombre: string = input();
-print("Hola, " + nombre + "!");
+print("What is your name?");
+let name: string = input();
+print("Hello, " + name + "!");
 
 print("");
-print("Contame algo:");
-let frase: string = input();
-print("Me dijiste: \"" + frase + "\"");
-print("Tu frase tiene " + frase.length + " caracteres.");
+print("Say something:");
+let phrase: string = input();
+print("You said: \"" + phrase + "\"");
+print("Your phrase has " + phrase.length + " characters.");

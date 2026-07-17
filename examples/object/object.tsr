@@ -1,21 +1,21 @@
-// objetos.tsr — objetos inline con structs nombrados
-// Cubre: creación, lectura, asignación, dos tipos distintos.
+// object.tsr — inline objects with named structs
+// Covers: creation, reading, assignment, two distinct types.
 
 // ============================================================
-// 1. Objeto simple: dos campos (string + number)
+// 1. Simple object: two fields (string + number)
 // ============================================================
-let persona: { nombre: string, edad: number } = {
-    nombre: "Ana",
-    edad: 30
+let person: { name: string, age: number } = {
+    name: "Ana",
+    age: 30
 };
-print("Nombre: " + persona.nombre);   // "Ana"
-print("Edad: " + persona.edad);       // 30
+print("Name: " + person.name);   // "Ana"
+print("Age: " + person.age);     // 30
 
-persona.edad = 31;
-print("Nueva edad: " + persona.edad); // 31
+person.age = 31;
+print("New age: " + person.age); // 31
 
 // ============================================================
-// 2. Objeto con tres campos heterogéneos (string + number + boolean)
+// 2. Object with three heterogeneous fields (string + number + boolean)
 // ============================================================
 let config: { debug: boolean, max: number, label: string } = {
     debug: false,
@@ -26,27 +26,27 @@ print("Label: " + config.label);   // "main"
 print("Max: " + config.max);       // 100
 
 config.debug = true;
-print("Debug ahora: " + config.debug);   // true
+print("Debug now: " + config.debug);   // true
 
 // ============================================================
-// 3. Objetos como items dentro de arrays
+// 3. Objects as items inside arrays
 // ============================================================
-let puntos: { x: number, y: number }[] = [
+let points: { x: number, y: number }[] = [
     { x: 1, y: 2 },
     { x: 3, y: 4 },
     { x: 5, y: 6 }
 ];
 
-for (let p of puntos) {
-    print("Punto: (" + p.x + ", " + p.y + ")");
+for (let p of points) {
+    print("Point: (" + p.x + ", " + p.y + ")");
 }
 
 // ============================================================
-// 4. Sumar coordenadas
+// 4. Sum the coordinates
 // ============================================================
 let totalX: number = 0;
 let totalY: number = 0;
-for (let p of puntos) {
+for (let p of points) {
     totalX = totalX + p.x;
     totalY = totalY + p.y;
 }
@@ -54,7 +54,7 @@ print("Total X: " + totalX);   // 9
 print("Total Y: " + totalY);   // 12
 
 // ============================================================
-// 5. Reasignar campos en array de objetos
+// 5. Reassign fields on an element of an object array
 // ============================================================
-puntos[0].x = 100;
-print("puntos[0].x = " + puntos[0].x);   // 100
+points[0].x = 100;
+print("points[0].x = " + points[0].x);   // 100

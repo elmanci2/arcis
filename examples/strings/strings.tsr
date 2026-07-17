@@ -1,73 +1,73 @@
-// strings.tsr — métodos de string + for-of
-// Cubre los 7 métodos string soportados y la iteración for-of sobre arrays.
+// strings.tsr — string methods + for-of
+// Covers all 7 supported string methods and `for-of` iteration over arrays.
 
 // ============================================================
-// 1. Métodos de transformación de case y whitespace
+// 1. Case and whitespace transforms
 // ============================================================
-let saludo: string = "Hola Mundo";
-print("toUpperCase: " + saludo.toUpperCase());   // HOLA MUNDO
-print("toLowerCase: " + saludo.toLowerCase());   // hola mundo
+let greeting: string = "Hello World";
+print("toUpperCase: " + greeting.toUpperCase());   // HELLO WORLD
+print("toLowerCase: " + greeting.toLowerCase());   // hello world
 
-let con_espacios: string = "   hola   ";
-print("trim: '" + con_espacios.trim() + "'");    // 'hola'
-
-// ============================================================
-// 2. Búsqueda y substrings
-// ============================================================
-print("substring(0,4): " + saludo.substring(0, 4));   // Hola
-print("substring(5): " + saludo.substring(5, 10));    // Mundo
-print("indexOf('Mundo'): " + saludo.indexOf("Mundo")); // 5
-print("indexOf('xyz'): " + saludo.indexOf("xyz"));     // -1 (no encontrado)
-print("includes('Mundo'): " + saludo.includes("Mundo")); // true
-print("includes('xyz'): " + saludo.includes("xyz"));     // false
+let with_spaces: string = "   hello   ";
+print("trim: '" + with_spaces.trim() + "'");        // 'hello'
 
 // ============================================================
-// 3. Acceso por carácter
+// 2. Substrings and search
 // ============================================================
-print("charAt(0): " + saludo.charAt(0));   // H
-print("charAt(5): " + saludo.charAt(5));   // M
-print("charAt(99): '" + saludo.charAt(99) + "'"); // "" (fuera de rango)
+print("substring(0,4): " + greeting.substring(0, 4));     // Hello
+print("substring(5): " + greeting.substring(5, 10));    // World
+print("indexOf('World'): " + greeting.indexOf("World")); // 5
+print("indexOf('xyz'): " + greeting.indexOf("xyz"));     // -1 (not found)
+print("includes('World'): " + greeting.includes("World")); // true
+print("includes('xyz'): " + greeting.includes("xyz"));     // false
 
 // ============================================================
-// 4. for-of: iteración sobre los elementos
+// 3. Character access
+// ============================================================
+print("charAt(0): " + greeting.charAt(0));   // H
+print("charAt(5): " + greeting.charAt(5));   // W
+print("charAt(99): '" + greeting.charAt(99) + "'"); // "" (out of range)
+
+// ============================================================
+// 4. for-of: iterating over array elements
 // ============================================================
 let nums: number[] = [10, 20, 30, 40];
 
-// Suma con for-of
+// Sum with for-of
 let total: number = 0;
 for (let x of nums) {
     total = total + x;
 }
-print("Suma for-of: " + total);   // 100
+print("for-of sum: " + total);   // 100
 
 // continue + for-of
-let sin_20: number[] = [];
+let without_20: number[] = [];
 for (let n of nums) {
     if (n == 20) {
         continue;
     }
-    sin_20.push(n);
+    without_20.push(n);
 }
-print("Sin el 20: " + sin_20.length);   // 3 (10, 30, 40)
+print("Without 20: " + without_20.length);   // 3 (10, 30, 40)
 
 // break + for-of
-let encontrado: number = -1;
+let found: number = -1;
 for (let x of nums) {
     if (x == 30) {
-        encontrado = x;
+        found = x;
         break;
     }
 }
-print("Encontrado: " + encontrado);   // 30
+print("Found: " + found);   // 30
 
 // ============================================================
-// 5. Combinación: procesar strings con métodos
+// 5. Composition: process strings with chained methods
 // ============================================================
-function normalizar(s: string): string {
+function normalize(s: string): string {
     return s.trim().toLowerCase();
 }
 
-let input: string = "  HOLA  ";
-let normalizado: string = normalizar(input);
-print("Normalizado: '" + normalizado + "'");   // 'hola'
-print("¿contiene 'hola'? " + normalizado.includes("hola"));   // true
+let input: string = "  HELLO  ";
+let normalized: string = normalize(input);
+print("Normalized: '" + normalized + "'");                  // 'hello'
+print("Contains 'hello'? " + normalized.includes("hello")); // true

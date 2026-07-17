@@ -94,16 +94,16 @@ detect emptiness.
 The full output is long (50+ lines); here is an excerpt:
 
 ```
-length de nums: 5
+nums.length: 5
 nums[0]: 10
 nums[4]: 50
-Suma: 219
-Máximo: 99
+Sum: 219
+Max: 99
 find: 2
 filter length: 4
 reduce: 8
 pop: 8
-después de unshift[0]: 99
+after unshift[0]: 99
 ```
 
 See the source for the rest.
@@ -115,7 +115,6 @@ See the source for the rest.
   of bounds. Initialise the array with the size you need, or use
   `push` to grow it.
 - **Strings in `.length` count Unicode codepoints**, not bytes.
-  `"ñ".length` is `1`.
 - **Array `.length` counts elements**, not memory slots.
 - **`find` returns the default value when nothing matches**, not
   `null`/`undefined`.
@@ -127,6 +126,6 @@ See the source for the rest.
 ## Related examples
 
 - [`examples/strings/`](../strings/) — every `String` method (`toUpperCase`, `trim`, …).
-- [`examples/objetos/`](../objetos/) — arrays of objects.
+- [`examples/object/`](../object/) — arrays of objects.
 - [`examples/03-functions/`](../03-functions/) — defining the callback functions used here.
-- [`examples/tier2/`](../tier2/) — classic C-style `for` loops over arrays.
+- [`examples/loops/`](../loops/) — classic C-style `for` loops over arrays.

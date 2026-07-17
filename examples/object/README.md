@@ -1,14 +1,14 @@
-# `objetos.tsr` — inline object types and `struct` codegen
+# `object.tsr` — inline object types and `struct` codegen
 
 How Arcis handles object literals with declared shape: the inline
-type `{ name: string, edad: number }` becomes a Rust `struct`, and
+type `{ name: string, age: number }` becomes a Rust `struct`, and
 each occurrence of that shape (regardless of source file) refers to
 the same struct.
 
 ## Run it
 
 ```bash
-arcis run examples/objetos/objetos.tsr
+arcis run examples/object/object.tsr
 ```
 
 ## What it covers

@@ -1,7 +1,7 @@
-// Módulo de texto: demuestra `export { nombre as alias }` (re-export con alias).
+// Text module: demonstrates `export { name as alias }` (re-export with alias).
 export function gritar(s: string): string {
     return s + "!!!";
 }
 
-// Re-exporta la función pública `gritar` bajo el nombre `gritarFuerte`.
+// Re-export the public function `gritar` under the name `gritarFuerte`.
 export { gritar as gritarFuerte };

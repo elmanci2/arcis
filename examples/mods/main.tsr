@@ -1,0 +1,16 @@
+// Punto de entrada del programa (por convención, `main.tsr`).
+//
+// Importa símbolos de otros módulos con la misma sintaxis que TypeScript:
+//   - imports nombrados:        { sumar, PI }
+//   - import con alias:         { gritarFuerte as GRITAR }
+//   - import por defecto:       calcula
+import { sumar, PI } from "mate";
+import calcula from "mate";
+import { gritarFuerte as GRITAR } from "texto";
+
+
+
+print("PI = " + PI);
+print("2 + 3 = " + sumar(2, 3));
+print("calcula(10) = " + calcula(10)); // default export
+print(GRITAR("hola"));

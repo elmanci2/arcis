@@ -1,0 +1,125 @@
+// completo.tsr — demo de todo lo implementado en el lenguaje Arcis
+// Cubre: let/const, funciones, if/else, print, reasignación,
+// recursión, operadores aritméticos, de comparación y lógicos,
+// strings con concatenación, booleanos, números, comentarios.
+
+// 1. Variables con y sin tipo explícito
+let nombre: string = "Lenguaje";
+let version: number = 2026;
+let activo: boolean = true;
+let pi = 3.14;  // tipo inferido del literal
+
+// 2. Constantes (convención MAYÚSCULAS como en TS)
+const LIMITE: number = 100;
+const SALUDO: string = "Hola";
+
+// 3. Función simple
+function duplicar(x: number): number {
+    return x * 2;
+}
+
+// 4. Función con if/else
+function clasificar(n: number): string {
+    if (n < 0) {
+        return "negativo";
+    } else {
+        
+        if (n == 0) {
+            return "cero";
+        } else {
+            return "positivo";
+        }
+    }
+}
+
+// 5. Función recursiva: factorial
+function factorial(n: number): number {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * factorial(n - 1);
+    }
+}
+
+// 6. Función booleana con varios parámetros y lógica
+function esMayorDeEdad(edad: number, minimo: number): boolean {
+    return edad >= minimo && edad > 0;
+}
+
+// 7. Operador lógico AND con comparación
+function aprueba(nota: number): boolean {
+    return nota >= 70 && nota <= 100;
+}
+
+// 8. Negación unaria
+function esInvalido(x: number): boolean {
+    return !(x >= 0 && x <= 100);
+}
+
+// 9. Módulo aritmético
+function esPar(n: number): boolean {
+    return n % 2 == 0;
+}
+
+// === Programa principal ===
+
+print(SALUDO + " " + nombre);
+print("Versión: " + version);
+print("Activo: " + activo);
+print("PI: " + pi);
+print("Límite: " + LIMITE);
+
+// Llamadas a funciones simples
+let doble: number = duplicar(21);
+print("Duplicar 21 = " + doble);
+
+// If/else
+let clase: string = clasificar(-5);
+print("-5 es: " + clase);
+
+clase = clasificar(0);
+print("0 es: " + clase);
+
+clase = clasificar(42);
+print("42 es: " + clase);
+
+// Recursión
+let fact5: number = factorial(5);
+print("5! = " + fact5);
+
+let fact10: number = factorial(10);
+print("10! = " + fact10);
+
+// Booleanos
+let mayor: boolean = esMayorDeEdad(25, 18);
+print("¿25 es mayor de 18? " + mayor);
+
+mayor = esMayorDeEdad(15, 18);
+print("¿15 es mayor de 18? " + mayor);
+
+let ok: boolean = aprueba(85);
+print("¿Aprueba con 85? " + ok);
+
+let invalido: boolean = esInvalido(150);
+print("¿150 es inválido? " + invalido);
+
+let par: boolean = esPar(8);
+print("¿8 es par? " + par);
+
+par = esPar(7);
+print("¿7 es par? " + par);
+
+// Reasignación
+let contador: number = 0;
+contador = contador + 1;
+contador = contador * 10;
+print("Contador final: " + contador);
+
+// Comentario de bloque de varias líneas
+/* Esto demuestra
+   que los comentarios
+   de bloque funcionan. */
+
+// Concatenación múltiple
+let msg: string = "Doble: " + doble + " / Fact5: " + fact5;
+print(msg);

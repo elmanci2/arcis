@@ -1,0 +1,395 @@
+//! Statement parsing.
+//!
+//! Dispatches on the first token of a statement to one of the per-kind
+//! parsers. Each per-kind parser consumes the keyword, then the rest of
+//! its production. The `for` and function-body parsers recurse back into
+//! [`parse_stmt`](Parser::parse_stmt).
+
+use arcis_ast::{Expr, Function, Param, Stmt, Type};
+use arcis_lexer::TokenKind;
+
+use crate::error::ParseError;
+use crate::state::Parser;
+
+impl Parser {
+    /// Parse a single top-level or nested statement.
+    pub(crate) fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        match self.peek_kind() {
+            TokenKind::Let => self.parse_let(false),
+            TokenKind::Const => self.parse_let(true),
+            TokenKind::Function => self.parse_function(),
+            TokenKind::Import => super::modules::parse_import(self),
+            TokenKind::Export => super::modules::parse_export(self),
+            TokenKind::Return => self.parse_return(),
+            TokenKind::If => self.parse_if(),
+            TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
+            TokenKind::Break => {
+                self.advance();
+                self.expect(&TokenKind::Semi, "`;` after `break`")?;
+                Ok(Stmt::Break)
+            }
+            TokenKind::Continue => {
+                self.advance();
+                self.expect(&TokenKind::Semi, "`;` after `continue`")?;
+                Ok(Stmt::Continue)
+            }
+            TokenKind::Ident(_) => {
+                // Detect indexed assignment: `arr[expr] = expr;`
+                // Or member assignment: `obj.field = expr;`
+                // If the current token is an identifier and the next is `[` or
+                // `.`, parse the full expression and check whether an `=` follows.
+                let next_is_index_or_member = matches!(
+                    self.peek_at(1).map(|t| &t.kind),
+                    Some(TokenKind::LBracket) | Some(TokenKind::Dot)
+                );
+                if next_is_index_or_member {
+                    let expr = self.parse_expr()?;
+                    if self.check(&TokenKind::Eq) {
+                        match expr {
+                            Expr::Index { object, index } => {
+                                let name = if let Expr::Ident(n) = *object {
+                                    n
+                                } else {
+                                    return Err(ParseError {
+                                        line: self.peek().line,
+                                        col: self.peek().col,
+                                        msg: "the LHS of an indexed assignment must be an identifier".to_string(),
+                                    });
+                                };
+                                self.advance(); // =
+                                let value = self.parse_expr()?;
+                                self.expect(&TokenKind::Semi, "`;` after indexed assignment")?;
+                                return Ok(Stmt::AssignIndex {
+                                    object: name,
+                                    index: *index,
+                                    value,
+                                });
+                            }
+                            Expr::Member { object, property } => {
+                                self.advance(); // =
+                                let value = self.parse_expr()?;
+                                self.expect(&TokenKind::Semi, "`;` after member assignment")?;
+                                return Ok(Stmt::AssignMember {
+                                    object,
+                                    property,
+                                    value,
+                                });
+                            }
+                            _ => {
+                                return Err(ParseError {
+                                    line: self.peek().line,
+                                    col: self.peek().col,
+                                    msg: "invalid assignment LHS".to_string(),
+                                });
+                            }
+                        }
+                    }
+                    self.expect(&TokenKind::Semi, "after expression")?;
+                    return Ok(Stmt::Expr(expr));
+                }
+                // Disambiguate: if the next token is `=` (not `==`), it's an
+                // assignment; otherwise it's an expression.
+                if matches!(self.peek_at(1).map(|t| &t.kind), Some(TokenKind::Eq)) {
+                    self.parse_assign()
+                } else {
+                    let expr = self.parse_expr()?;
+                    self.expect(&TokenKind::Semi, "after expression")?;
+                    Ok(Stmt::Expr(expr))
+                }
+            }
+            _ => {
+                let expr = self.parse_expr()?;
+                self.expect(&TokenKind::Semi, "after expression")?;
+                Ok(Stmt::Expr(expr))
+            }
+        }
+    }
+
+    /// Plain assignment: `IDENT = expr;`
+    pub(crate) fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
+        let name_tok = self.advance(); // Ident
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!("parse_assign called without an Ident"),
+        };
+        self.expect(&TokenKind::Eq, "`=` after name")?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semi, "`;` after value")?;
+        Ok(Stmt::Assign { name, value })
+    }
+
+    /// Like [`parse_assign`](Self::parse_assign) but does not consume the
+    /// trailing `;`. Used for the `update` slot of a C-style `for`.
+    pub(crate) fn parse_assign_no_semi(&mut self) -> Stmt {
+        let name_tok = self.advance();
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        // Detect indexed assignment: `name[expr] = expr`
+        if self.check(&TokenKind::LBracket) {
+            self.advance(); // [
+            let index = self.parse_expr().unwrap();
+            self.expect(&TokenKind::RBracket, "`]` in indexed assignment").unwrap();
+            self.expect(&TokenKind::Eq, "`=` in indexed assignment").unwrap();
+            let value = self.parse_expr().unwrap();
+            return Stmt::AssignIndex { object: name, index, value };
+        }
+        self.expect(&TokenKind::Eq, "`=` after name").unwrap();
+        let value = self.parse_expr().unwrap();
+        Stmt::Assign { name, value }
+    }
+
+    /// `let` / `const` declaration. `is_const` distinguishes the two.
+    pub(crate) fn parse_let(&mut self, is_const: bool) -> Result<Stmt, ParseError> {
+        self.advance(); // let / const
+        let name_tok = self.expect(&TokenKind::Ident(String::new()), "variable name")?;
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        let line = name_tok.line;
+        let col = name_tok.col;
+
+        let ty = if self.matches(&TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(&TokenKind::Eq, "assignment `=`")?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semi, "after value")?;
+
+        if is_const {
+            Ok(Stmt::Const { name, ty, value, line, col })
+        } else {
+            Ok(Stmt::Let { name, ty, value, line, col })
+        }
+    }
+
+    /// `function NAME (params): RET { body }`
+    pub(crate) fn parse_function(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // function
+        let f = self.parse_function_rest(true)?;
+        Ok(Stmt::Function(f))
+    }
+
+    /// Parse `[name] (params) : return { body }`. Called immediately after
+    /// consuming `function`. If `require_name` is `false` (e.g.
+    /// `export default function`), an anonymous function (empty name) is
+    /// permitted.
+    pub(crate) fn parse_function_rest(
+        &mut self,
+        require_name: bool,
+    ) -> Result<Function, ParseError> {
+        let name = if let TokenKind::Ident(_) = self.peek_kind() {
+            let tok = self.advance();
+            match tok.kind {
+                TokenKind::Ident(s) => s,
+                _ => unreachable!(),
+            }
+        } else if require_name {
+            let t = self.peek();
+            return Err(ParseError {
+                line: t.line,
+                col: t.col,
+                msg: "expected function name".to_string(),
+            });
+        } else {
+            String::new()
+        };
+
+        self.expect(&TokenKind::LParen, "`(` after function name")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RParen) {
+            loop {
+                let pname_tok = self.expect(&TokenKind::Ident(String::new()), "parameter name")?;
+                let pname = match &pname_tok.kind {
+                    TokenKind::Ident(s) => s.clone(),
+                    _ => unreachable!(),
+                };
+                let pline = pname_tok.line;
+                let pcol = pname_tok.col;
+                self.expect(&TokenKind::Colon, "`:` after parameter name")?;
+                let pty = self.parse_type()?;
+                params.push(Param { name: pname, ty: pty, line: pline, col: pcol });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)` after parameters")?;
+
+        let return_type = if self.matches(&TokenKind::Colon) {
+            self.parse_type()?
+        } else {
+            Type::void()
+        };
+
+        self.expect(&TokenKind::LBrace, "`{` opening function body")?;
+        let mut body = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing function body")?;
+
+        Ok(Function {
+            name,
+            params,
+            return_type,
+            body,
+        })
+    }
+
+    /// `return [expr];`
+    pub(crate) fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // return
+        if self.check(&TokenKind::Semi) {
+            self.advance();
+            return Ok(Stmt::Return(None));
+        }
+        let expr = self.parse_expr()?;
+        self.expect(&TokenKind::Semi, "`;` after `return`")?;
+        Ok(Stmt::Return(Some(expr)))
+    }
+
+    /// `if (cond) { then } else { els }`
+    pub(crate) fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // if
+        self.expect(&TokenKind::LParen, "`(` after `if`")?;
+        let condition = self.parse_expr()?;
+        self.expect(&TokenKind::RParen, "`)` after if condition")?;
+        self.expect(&TokenKind::LBrace, "`{` opening then-block")?;
+        let mut then_branch = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            then_branch.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing then-block")?;
+
+        let else_branch = if self.matches(&TokenKind::Else) {
+            self.expect(&TokenKind::LBrace, "`{` opening else-block")?;
+            let mut stmts = Vec::new();
+            while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                stmts.push(self.parse_stmt()?);
+            }
+            self.expect(&TokenKind::RBrace, "`}` closing else-block")?;
+            Some(stmts)
+        } else {
+            None
+        };
+
+        Ok(Stmt::If { condition, then_branch, else_branch })
+    }
+
+    /// `while (cond) { body }`
+    pub(crate) fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // while
+        self.expect(&TokenKind::LParen, "`(` after `while`")?;
+        let condition = self.parse_expr()?;
+        self.expect(&TokenKind::RParen, "`)` after while condition")?;
+        self.expect(&TokenKind::LBrace, "`{` opening while body")?;
+        let mut body = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing while body")?;
+        Ok(Stmt::While { condition, body })
+    }
+
+    /// `for (init; cond; update) { body }` or `for (let x of arr) { body }`.
+    pub(crate) fn parse_for(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // for
+        self.expect(&TokenKind::LParen, "`(` after `for`")?;
+
+        // Detect for-of: `for (let IDENT of EXPR)`.
+        // The C-style init pattern `let IDENT = EXPR` has `=` at peek_at(2),
+        // while for-of has `of` at peek_at(2).
+        let is_for_of = matches!(self.peek_kind(), TokenKind::Let)
+            && matches!(
+                self.peek_at(1).map(|t| std::mem::discriminant(&t.kind)),
+                Some(d) if d == std::mem::discriminant(&TokenKind::Ident(String::new()))
+            )
+            && matches!(self.peek_at(2).map(|t| &t.kind), Some(TokenKind::Of));
+
+        if is_for_of {
+            self.advance(); // let
+            let name_tok =
+                self.expect(&TokenKind::Ident(String::new()), "loop variable in `for-of`")?;
+            let name = match &name_tok.kind {
+                TokenKind::Ident(s) => s.clone(),
+                _ => unreachable!(),
+            };
+            // Optional type: `let x: number of arr`
+            let ty = if self.matches(&TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            self.expect(&TokenKind::Of, "`of` after loop variable")?;
+            let iterable = self.parse_expr()?;
+            self.expect(&TokenKind::RParen, "`)` after `for-of` iterable")?;
+            self.expect(&TokenKind::LBrace, "`{` opening `for-of` body")?;
+            let mut body = Vec::new();
+            while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                body.push(self.parse_stmt()?);
+            }
+            self.expect(&TokenKind::RBrace, "`}` closing `for-of` body")?;
+            return Ok(Stmt::ForOf { name, ty, iterable: Box::new(iterable), body });
+        }
+
+        // init: let | const | expr | empty (each terminated with `;`)
+        let init = if self.check(&TokenKind::Semi) {
+            self.advance();
+            None
+        } else if matches!(self.peek_kind(), TokenKind::Let | TokenKind::Const) {
+            let stmt = self.parse_let(matches!(self.peek_kind(), TokenKind::Const))?;
+            // parse_let already consumed the `;`
+            Some(Box::new(stmt))
+        } else {
+            // expression
+            let expr = self.parse_expr()?;
+            self.expect(&TokenKind::Semi, "`;` after `for` init")?;
+            Some(Box::new(Stmt::Expr(expr)))
+        };
+
+        // condition: optional
+        let condition = if self.check(&TokenKind::Semi) {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        self.expect(&TokenKind::Semi, "`;` after `for` condition")?;
+
+        // update: optional
+        let update = if self.check(&TokenKind::RParen) {
+            None
+        } else {
+            // can be an assignment or expression statement.
+            // Detect assignment the same way as parse_stmt but without `;`.
+            let stmt = if let TokenKind::Ident(_) = self.peek_kind() {
+                if matches!(self.peek_at(1).map(|t| &t.kind), Some(TokenKind::Eq)) {
+                    self.parse_assign_no_semi()
+                } else {
+                    let expr = self.parse_expr()?;
+                    Stmt::Expr(expr)
+                }
+            } else {
+                let expr = self.parse_expr()?;
+                Stmt::Expr(expr)
+            };
+            Some(Box::new(stmt))
+        };
+
+        self.expect(&TokenKind::RParen, "`)` after `for` update")?;
+        self.expect(&TokenKind::LBrace, "`{` opening `for` body")?;
+        let mut body = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing `for` body")?;
+
+        Ok(Stmt::For { init, condition, update, body })
+    }
+}

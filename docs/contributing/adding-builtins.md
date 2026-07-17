@@ -17,29 +17,71 @@ The current implementation is split across focused modules:
 - `crates/arcis-codegen/src/builtin.rs` — `print` and `input`.
 - `crates/arcis-codegen/src/method.rs` — array / string method dispatch.
 - `crates/arcis-codegen/src/sys/` — `sys.*` builtins, dispatched across
-  three submodules:
-  - `sys/mod.rs` — top-level dispatcher (`emit_call`, `emit_member`),
-    shared `emit_arg_ref` helper, and the verbatim fallback for unknown
-    `sys.X` calls.
+  ten submodules:
+  - `sys/mod.rs` — top-level dispatcher (`emit_call`, `emit_member`,
+    `emit_subns_call`), shared `emit_arg_ref` helper, the
+    `emit_linux_gated` helper, and the verbatim fallback for unknown
+    `sys.X` / `sys.<ns>.<X>` calls.
   - `sys/fs.rs` — file-system operations (read, write, create, delete,
     copy, move, list).
   - `sys/path.rs` — path queries and transformations (exists, isFile,
     isDir, size, absolute, relative, symlink).
-  - `sys/env.rs` — process / environment queries (currentDir, tempDir,
-    homeDir, executablePath, changeDir).
+  - `sys/proc_env.rs` — process / environment queries (currentDir,
+    tempDir, homeDir, executablePath, changeDir).
+  - `sys/process.rs` — child-process management (process, exec, spawn,
+    kill, currentPid, parentPid, processes).
+  - `sys/env.rs` — environment variables (`sys.env.get`/`set`/
+    `delete`/`all`).
+  - `sys/os.rs` — OS info (`sys.os.name`/`version`/`arch`/...).
+  - `sys/memory.rs` — RAM info (`sys.memory.total`/`free`/...).
+  - `sys/cpu.rs` — CPU info (`sys.cpu.model`/`brand`/...).
+  - `sys/gpu.rs` — GPU info (`sys.gpu.list`/`name`/`vendor`/`memory`).
+  - `sys/disk.rs` — disk info (`sys.disk.list`/`free`/`used`/`total`).
 
 The dispatch point for `sys.<X>(...)` is `expr.rs` → `emit_call`, which
 detects the `sys` namespace identifier and forwards to
 `crate::sys::emit_call`. Unknown `sys.X` are re-emitted verbatim so
 `rustc` produces the diagnostic.
 
+The dispatch point for `sys.<ns>.<method>(...)` is `expr.rs` →
+`emit_call`'s nested branch, which detects the `sys.<ns>` pattern and
+forwards to `crate::sys::emit_subns_call`. Unknown sub-namespace
+calls are re-emitted verbatim.
+
+### Linux-first builtins
+
+For builtins that have a Linux implementation but must still compile
+(and return a sensible default) on every other target, wrap the
+Linux emit in `emit_linux_gated(out, "<linux>", "<default>")`. The
+helper emits:
+
+```rust
+(if cfg!(target_os = "linux") { <linux> } else { <default> })
+```
+
+`cfg!` resolves at runtime, so the emitted source is portable across
+targets without `#[cfg(...)]` attributes.
+
+### Built-in struct return types
+
+`sys.process(cmd, args)` returns the built-in `ArcisProcess { stdout:
+String, stderr: String, exitCode: f64 }` struct. This struct is
+declared unconditionally by `crate::generate_all` (see
+`crates/arcis-codegen/src/lib.rs`) by pushing a synthetic
+`arcis_ast::Type` into `all_obj_types` before `module::generate` runs.
+`types::emit_struct_def` then emits the `pub struct ArcisProcess` at
+the root module, and the codegen for `sys.process` references it
+directly. If you need another struct return type for a builtin, follow
+the same pattern.
+
 ## Adding a new `sys.*` builtin
 
 1. **Pick the right submodule.** File/dir IO goes in
    `crates/arcis-codegen/src/sys/fs.rs`. Path queries and
    transformations go in `sys/path.rs`. Process/environment lookups go
-   in `sys/env.rs`. If you are unsure, look at the doc-comment table at
-   the top of each submodule.
+   in `sys/env.rs`. Child-process management goes in `sys/process.rs`.
+   If you are unsure, look at the doc-comment table at the top of each
+   submodule.
 2. **Add a match arm** to the appropriate `try_emit(...)` (or
    `try_emit_call(...)`) function. Example, in `sys/fs.rs`:
 

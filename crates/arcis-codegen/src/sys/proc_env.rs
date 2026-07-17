@@ -1,8 +1,15 @@
-//! `sys.*` environment / process builtins.
+//! `sys.*` process-environment builtins.
 //!
 //! Process-scoped operations: where am I, where can I write, where do I
-//! live, etc. Note that `sys.args` is a *member access* (not a call) and
-//! is handled in [`super::emit_member`].
+//! live, etc. These are the **top-level** `sys.X` builtins (e.g. `sys.
+//! currentDir()`, `sys.changeDir(...)`).
+//!
+//! Note that `sys.args` is a *member access* (not a call) and is handled
+//! in [`super::emit_member`].
+//!
+//! Environment-variable accessors live in the sibling
+//! [`super::env`] module and are reached via the `sys.env.*` sub-
+//! namespace (e.g. `sys.env.get("HOME")`).
 //!
 //! ## Supported operations
 //!

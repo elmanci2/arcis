@@ -17,6 +17,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Module-level doc-comments at the top of each phase crate translated to English.
 
 ### Added
+- New `sys.*` process-management builtins in a new `sys/process.rs`
+  submodule: `process(cmd, args)` (returns the built-in `ArcisProcess
+  { stdout: String, stderr: String, exitCode: f64 }` struct),
+  `exec(cmd, args?)` (returns stdout as a lossy `string`), `spawn(cmd,
+  args?)` (returns the child PID as `number`), `kill(pid)` (sends
+  SIGTERM via the `kill` binary), `currentPid()`, `parentPid()` (uses
+  `std::os::unix::process::parent_id` on unix, `0` on windows via
+  runtime `cfg!`), and `processes()` (parses `ps -e -o pid=,comm=` and
+  returns `pid=<n>;name=<s>` per process; empty on windows).
+- New built-in struct return type `ArcisProcess`. Codegen
+  unconditionally emits a `pub struct ArcisProcess { pub stdout: String,
+  pub stderr: String, pub exitCode: f64 }` at the root module (via
+  `arcis_ast::Type` injection in `generate_all`), so users can write
+  `let p = sys.process(...)` without a type annotation.
+- 8 new integration tests for the process builtins (39 sys_codegen tests
+  total).
+- New `sys.*` sub-namespace call dispatch: `sys.<ns>.<method>(args)`
+  routes through a new `crate::sys::emit_subns_call` function which
+  delegates to per-namespace `try_emit_method` handlers.
+- Six new sub-namespace modules under `crates/arcis-codegen/src/sys/`:
+  - `env.rs` — environment variables: `sys.env.get`/`set`/`delete`/`all`.
+  - `os.rs` — OS info: `sys.os.name`/`version`/`arch`/`hostname`/
+    `username`/`uptime`/`locale`/`cpuCount`. Cross-platform via stdlib
+    (`std::env::consts::ARCH`, `available_parallelism`, `cfg!(...)`).
+  - `memory.rs` — RAM info: `sys.memory.total`/`free`/`used`/
+    `available` (Linux-first via `/proc/meminfo`, returns 0 elsewhere).
+  - `cpu.rs` — CPU info: `sys.cpu.model`/`brand`/`frequency`/`usage`/
+    `cores`. `usage` samples `/proc/stat` twice with a 100ms sleep.
+  - `gpu.rs` — GPU info: `sys.gpu.list`/`name`/`vendor`/`memory`. Linux
+    via `lspci -vmm` and `nvidia-smi`; stubs return `[]` or `0` elsewhere.
+  - `disk.rs` — disk info: `sys.disk.list`/`free`/`used`/`total`.
+    Cross-platform via `df -B1 -P`.
+- Renamed `sys/env.rs` → `sys/proc_env.rs` (process queries: currentDir,
+  tempDir, homeDir, executablePath, changeDir) so the `sys.env` name
+  is free for the new environment-variable namespace.
+- New `super::emit_linux_gated` helper in `sys/mod.rs` that emits a
+  runtime `cfg!(target_os = "linux")` branch with a default fallback,
+  used by every Linux-first builtin.
+- 29 new integration tests for the sub-namespace builtins (68
+  sys_codegen tests total).
 - Split `sys` codegen into three submodules under
   `crates/arcis-codegen/src/sys/`: `fs` (file/dir IO), `path` (path
   queries) and `env` (process / environment). Each submodule exposes a

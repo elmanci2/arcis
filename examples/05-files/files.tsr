@@ -1,15 +1,26 @@
 // 05_files.tsr — `sys.*` filesystem builtins.
 //
-// `sys` codegen is split into three submodules (see
+// `sys` codegen is split into ten submodules (see
 // `crates/arcis-codegen/src/sys/`):
 //
-//   - `fs`   — readFile, writeFile, readBytes, writeBytes, appendFile,
-//              createFile, deleteFile, deleteDir, deleteDirAll, mkdir,
-//              listDir, copy, move, rename
-//   - `path` — exists, isFile, isDir, fileSize, fileInfo, absolute,
-//              relative, createSymlink, readLink
-//   - `env`  — sys.args (member), currentDir, changeDir, tempDir,
-//              homeDir, executablePath
+//   Top-level `sys.X(args)`:
+//     - `fs`      — readFile, writeFile, readBytes, writeBytes, appendFile,
+//                   createFile, deleteFile, deleteDir, deleteDirAll, mkdir,
+//                   listDir, copy, move, rename
+//     - `path`    — exists, isFile, isDir, fileSize, fileInfo, absolute,
+//                   relative, createSymlink, readLink
+//     - `proc_env` — currentDir, changeDir, tempDir, homeDir, executablePath
+//     - `process`  — process, exec, spawn, kill, currentPid, parentPid,
+//                    processes
+//
+//   Sub-namespace `sys.<ns>.<method>(args)`:
+//     - `env`     — get, set, delete, all  (environment variables)
+//     - `os`      — name, version, arch, hostname, username, uptime,
+//                   locale, cpuCount
+//     - `memory`  — total, free, used, available
+//     - `cpu`     — model, brand, frequency, usage, cores
+//     - `gpu`     — list, name, vendor, memory
+//     - `disk`    — list, free, used, total
 //
 // They are available without any `import`.
 //
@@ -162,4 +173,118 @@ sys.deleteFile(backup);
 sys.deleteFile(moved);
 sys.deleteDir(dir);
 print("dir removed? " + !sys.exists(dir));
+
+// ------------------------------------------------------------
+// 11. Process management (sys.process, sys.exec, sys.spawn,
+//     sys.currentPid, sys.parentPid, sys.processes, sys.kill).
+//     The return type of sys.process is the built-in `ArcisProcess`
+//     struct (always emitted by the codegen root module).
+// ------------------------------------------------------------
+
+print("--- process demo ---");
+
+// 11a. sys.process(cmd, args) — captures stdout, stderr and exit code.
+let p = sys.process("echo", ["hi from arcis"]);
+print("stdout:    [" + p.stdout + "]");
+print("stderr:    [" + p.stderr + "]");
+print("exitCode:  " + p.exitCode);
+
+// 11b. sys.exec(cmd, args) — returns stdout as a string (lossy UTF-8).
+let uname: string = sys.exec("uname", ["-s"]);
+print("uname:     " + uname.trim());
+
+// 11c. sys.currentPid / sys.parentPid.
+print("currentPid: " + sys.currentPid());
+print("parentPid:  " + sys.parentPid());
+
+// 11d. sys.processes() — returns `pid=<n>;name=<s>` per process.
+let procs: string[] = sys.processes();
+print("process count: " + procs.length);
+if (procs.length > 0) {
+    print("first proc:    " + procs[0]);
+}
+
+// 11e. sys.spawn + sys.kill — spawn a long-running child, then kill it.
+//     `sleep 30 &` would block; we use `sh -c "sleep 30"` so we get a
+//     child PID we control.
+let spawned: number = sys.spawn("sh", ["-c", "sleep 30"]);
+print("spawned pid:   " + spawned);
+sys.kill(spawned);
+print("killed pid:    " + spawned);
+
+// ------------------------------------------------------------
+// 12. sys.env.* (environment variables). Distinct from sys.env.rs
+//     (process queries).
+// ------------------------------------------------------------
+
+print("--- sys.env demo ---");
+sys.env.set("ARCIS_EXAMPLE", "1");
+print("ARCIS_EXAMPLE: " + sys.env.get("ARCIS_EXAMPLE"));
+print("HOME (truncated): " + sys.env.get("HOME"));
+let envVars: string[] = sys.env.all();
+print("env var count: " + envVars.length);
+sys.env.delete("ARCIS_EXAMPLE");
+
+// ------------------------------------------------------------
+// 13. sys.os.* (OS info).
+// ------------------------------------------------------------
+
+print("--- sys.os demo ---");
+print("name:     " + sys.os.name());
+print("arch:     " + sys.os.arch());
+print("version:  " + sys.os.version().trim());
+print("hostname: " + sys.os.hostname());
+print("username: " + sys.os.username());
+print("locale:   " + sys.os.locale());
+print("cpuCount: " + sys.os.cpuCount());
+print("uptime:   " + sys.os.uptime() + " s");
+
+// ------------------------------------------------------------
+// 14. sys.memory.* (Linux-first; 0 on other platforms).
+// ------------------------------------------------------------
+
+print("--- sys.memory demo ---");
+print("total:     " + sys.memory.total() + " bytes");
+print("free:      " + sys.memory.free() + " bytes");
+print("used:      " + sys.memory.used() + " bytes");
+print("available: " + sys.memory.available() + " bytes");
+
+// ------------------------------------------------------------
+// 15. sys.cpu.* (Linux-first; 0 on other platforms).
+// ------------------------------------------------------------
+
+print("--- sys.cpu demo ---");
+print("model:     " + sys.cpu.model());
+print("brand:     " + sys.cpu.brand());
+print("frequency: " + sys.cpu.frequency() + " MHz");
+print("cores:     " + sys.cpu.cores());
+print("usage:     " + sys.cpu.usage() + " %");
+
+// ------------------------------------------------------------
+// 16. sys.gpu.* (Linux-first; 0 / empty on other platforms).
+// ------------------------------------------------------------
+
+print("--- sys.gpu demo ---");
+let gpus: string[] = sys.gpu.list();
+print("gpu count:  " + gpus.length);
+if (gpus.length > 0) {
+    print("gpu[0]:     " + gpus[0]);
+}
+print("gpu.name:   " + sys.gpu.name());
+print("gpu.vendor: " + sys.gpu.vendor());
+print("gpu.memory: " + sys.gpu.memory() + " bytes");
+
+// ------------------------------------------------------------
+// 17. sys.disk.* (cross-platform via `df`).
+// ------------------------------------------------------------
+
+print("--- sys.disk demo ---");
+let disks: string[] = sys.disk.list();
+print("disk count: " + disks.length);
+if (disks.length > 0) {
+    print("disks[0]:   " + disks[0]);
+}
+print("disk.free(/):  " + sys.disk.free("/") + " bytes");
+print("disk.used(/):  " + sys.disk.used("/") + " bytes");
+print("disk.total(/): " + sys.disk.total("/") + " bytes");
 

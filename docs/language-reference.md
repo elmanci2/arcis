@@ -105,7 +105,14 @@ type         = "string" | "number" | "boolean" | "void" | IDENT
 | `print`, `input`     | ✔ (builtins)     |
 | `sys.*` (filesystem) | ✔ `readFile`/`writeFile`/`readBytes`/`writeBytes`/`appendFile`/`createFile`/`deleteFile`/`deleteDir`/`deleteDirAll`/`mkdir`/`listDir`/`copy`/`move`/`rename` |
 | `sys.*` (path)       | ✔ `exists`/`isFile`/`isDir`/`fileSize`/`fileInfo`/`absolute`/`relative`/`createSymlink`/`readLink` |
-| `sys.*` (env)        | ✔ `args`/`currentDir`/`changeDir`/`tempDir`/`homeDir`/`executablePath` |
+| `sys.*` (proc env)   | ✔ `args`/`currentDir`/`changeDir`/`tempDir`/`homeDir`/`executablePath` |
+| `sys.*` (process)    | ✔ `process`/`exec`/`spawn`/`kill`/`currentPid`/`parentPid`/`processes`. `sys.process(cmd, args)` returns the built-in `ArcisProcess { stdout, stderr, exitCode }` struct. |
+| `sys.env.*`          | ✔ `get`/`set`/`delete`/`all` (environment variables). |
+| `sys.os.*`           | ✔ `name`/`version`/`arch`/`hostname`/`username`/`uptime`/`locale`/`cpuCount`. Cross-platform via stdlib. |
+| `sys.memory.*`       | ✔ `total`/`free`/`used`/`available` (bytes). Linux-first via `/proc/meminfo`. |
+| `sys.cpu.*`          | ✔ `model`/`brand`/`frequency`/`usage`/`cores`. Linux-first via `/proc/cpuinfo`+`/proc/stat`; `usage` blocks 100ms. |
+| `sys.gpu.*`          | ✔ `list`/`name`/`vendor`/`memory`. Linux-first via `lspci` and `nvidia-smi`. |
+| `sys.disk.*`         | ✔ `list`/`free`/`used`/`total`. Cross-platform via `df`. |
 | Arrays + object literals | ✔ (with declared type) |
 | Array methods        | `find`, `filter`, `map`, `reduce`, `pop`, `push`, `unshift` |
 | String methods       | `toUpperCase`, `toLowerCase`, `trim`, `substring`, `indexOf`, `includes`, `charAt`, `.length` |

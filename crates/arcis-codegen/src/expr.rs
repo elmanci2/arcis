@@ -198,6 +198,17 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
             return;
         }
     }
+    // sys.<ns>.<method>(args) sub-namespace call.
+    if let Expr::Member { object, property } = callee {
+        if let Expr::Member { object: ns_obj, property: ns } = object.as_ref() {
+            if let Expr::Ident(module) = ns_obj.as_ref() {
+                if module == "sys" {
+                    crate::sys::emit_subns_call(out, ns, property, args, ctx);
+                    return;
+                }
+            }
+        }
+    }
     // sys.* builtins.
     if let Expr::Member { object, property } = callee {
         if let Expr::Ident(module) = object.as_ref() {

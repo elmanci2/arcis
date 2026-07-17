@@ -55,7 +55,42 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     use std::collections::HashMap;
 
     // Object-type structs are centralised in the root module (deduped by name).
-    let all_obj_types = collect::collect_all_object_types(modules);
+    let mut all_obj_types = collect::collect_all_object_types(modules);
+
+    // `sys.process(cmd, args)` returns an `ArcisProcess { stdout, stderr, exitCode }`
+    // value. Codegen always emits a literal of this type, so the struct definition
+    // must always be present in the root module — even for programs that don't
+    // reference it (the linker will discard the unused type).
+    all_obj_types.push(arcis_ast::Type {
+        name: "ArcisProcess".to_string(),
+        fields: vec![
+            (
+                "stdout".to_string(),
+                Box::new(arcis_ast::Type {
+                    name: "string".to_string(),
+                    fields: Vec::new(),
+                    is_array: false,
+                }),
+            ),
+            (
+                "stderr".to_string(),
+                Box::new(arcis_ast::Type {
+                    name: "string".to_string(),
+                    fields: Vec::new(),
+                    is_array: false,
+                }),
+            ),
+            (
+                "exitCode".to_string(),
+                Box::new(arcis_ast::Type {
+                    name: "number".to_string(),
+                    fields: Vec::new(),
+                    is_array: false,
+                }),
+            ),
+        ],
+        is_array: false,
+    });
 
     // Canonical-path → id map, for resolving `use crate::<id>::...`.
     let path_to_id: HashMap<std::path::PathBuf, String> = modules

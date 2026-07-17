@@ -1,0 +1,128 @@
+// arrays.tsr — demo de arrays (number[] y string[])
+// Cubre: creación, indexado, asignación indexada, length,
+// for sobre array, función con array como parámetro, búsqueda lineal.
+
+// ============================================================
+// 1. Creación, indexado y length
+// ============================================================
+let nums: number[] = [10, 20, 30, 40, 50];
+print("length de nums: " + nums.length);   // 5
+print("nums[0]: " + nums[0]);               // 10
+print("nums[4]: " + nums[4]);               // 50
+
+// ============================================================
+// 2. Asignación indexada: nums[2] = 99
+// ============================================================
+nums[2] = 99;
+print("nums[2] después de asignar: " + nums[2]);  // 99
+
+// ============================================================
+// 3. Suma de todos los elementos (recorrido clásico)
+// ============================================================
+let suma: number = 0;
+for (let i: number = 0; i < nums.length; i = i + 1) {
+    suma = suma + nums[i];
+}
+print("Suma: " + suma);   // 10+20+99+40+50 = 219
+
+// ============================================================
+// 4. Encontrar el máximo
+// ============================================================
+let max: number = nums[0];
+for (let i: number = 1; i < nums.length; i = i + 1) {
+    if (nums[i] > max) {
+        max = nums[i];
+    }
+}
+print("Máximo: " + max);   // 99
+
+// ============================================================
+// 5. Array de strings + length por chars
+// ============================================================
+let palabras: string[] = ["arcis", "mundo", "arcis"];
+print("palabras.length: " + palabras.length);          // 3
+print("palabras[0].length: " + palabras[0].length);    // 4 (chars en "arcis")
+print("palabras[2].length: " + palabras[2].length);    // 5 (chars en "arcis")
+
+// ============================================================
+// 6. Búsqueda lineal: encontrar índice de un elemento
+// ============================================================
+function buscar(arr: number[], objetivo: number): number {
+    for (let i: number = 0; i < arr.length; i = i + 1) {
+        if (arr[i] == objetivo) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+let datos: number[] = [10, 20, 30, 40];
+let pos1: number = buscar(datos, 30);
+let pos2: number = buscar(datos, 99);
+print("30 está en posición " + pos1);   // 2
+print("99 está en posición " + pos2);   // -1 (no encontrado)
+
+// ============================================================
+// 7. Array con tamaño inicial (Rust no extiende automáticamente;
+//    `arr[i] = v` requiere que el índice exista, como en C++).
+// ============================================================
+let acum: number[] = [0, 0, 0];
+acum[0] = 100;
+acum[1] = 200;
+acum[2] = 300;
+print("acum.length: " + acum.length);   // 3
+print("acum[0] + acum[2] = " + (acum[0] + acum[2]));  // 400
+
+// ============================================================
+// 8. Contar elementos mayores que X
+// ============================================================
+function contarMayores(arr: number[], x: number): number {
+    let cuenta: number = 0;
+    for (let i: number = 0; i < arr.length; i = i + 1) {
+        if (arr[i] > x) {
+            cuenta = cuenta + 1;
+        }
+    }
+    return cuenta;
+}
+
+let notas: number[] = [50, 75, 90, 60, 85];
+let aprobados: number = contarMayores(notas, 70);
+print("Notas > 70: " + aprobados);   // 3
+
+// ============================================================
+// 9. Métodos de array: find, filter, map, reduce, pop, unshift
+// ============================================================
+function esPositivo(x: number): boolean { return x > 0; }
+function duplicar(x: number): number { return x * 2; }
+function sumar(a: number, b: number): number { return a + b; }
+
+let mix: number[] = [-3, -1, 2, 5, 7, -10, 8];
+
+// find: primer elemento que cumple
+let primero: number = mix.find(esPositivo);
+print("find: " + primero);   // 2
+
+// filter: nuevo array con los que cumplen
+let positivos: number[] = mix.filter(esPositivo);
+print("filter length: " + positivos.length);   // 4 (2, 5, 7, 8)
+print("filter[0]: " + positivos[0]);           // 2
+
+// map: nuevo array transformado
+let dobles: number[] = mix.map(duplicar);
+print("map length: " + dobles.length);         // 7
+print("map[0]: " + dobles[0]);                 // -6
+
+// reduce: acumulado
+let total: number = mix.reduce(sumar, 0);
+print("reduce: " + total);   // 8 (suma: -3+-1+2+5+7-10+8)
+
+// pop: saca y retorna el último
+let ult: number = mix.pop();
+print("pop: " + ult);                         // 8
+print("después de pop length: " + mix.length);   // 6
+
+// unshift: inserta al inicio
+mix.unshift(99);
+print("después de unshift[0]: " + mix[0]);    // 99
+print("length: " + mix.length);                // 7

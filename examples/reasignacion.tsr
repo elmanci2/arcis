@@ -1,0 +1,27 @@
+// reasignacion.tsr — verifica que se puede reasignar una variable `let`
+
+let contador: number = 0;
+let acumulado: number = 0;
+
+contador = contador + 1;
+acumulado = acumulado + 10;
+print(contador);
+print(acumulado);
+
+contador = contador * 2;
+print(contador);
+
+// Swap clásico usando variable auxiliar
+let a: number = 1;
+let b: number = 2;
+let tmp: number = a;
+a = b;
+b = tmp;
+print(a);
+print(b);
+
+// Reasignación de string
+let saludo: string = "Hola";
+print(saludo);
+saludo = "Adios";
+print(saludo);

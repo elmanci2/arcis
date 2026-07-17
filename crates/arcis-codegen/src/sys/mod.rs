@@ -23,6 +23,7 @@
 //! - [`cpu`] — CPU info (model, brand, frequency, usage, cores).
 //! - [`gpu`] — GPU info (list, name, vendor, memory).
 //! - [`disk`] — disk info (list, free, used, total).
+//! - [`net`] — network info (hostname, interfaces, ip, publicIp, online).
 //!
 //! Each top-level submodule exposes a `try_emit(...) -> bool`; each
 //! sub-namespace module exposes `try_emit_method(...) -> bool`. The
@@ -42,6 +43,7 @@ mod env;
 mod fs;
 mod gpu;
 mod memory;
+mod net;
 mod os;
 mod path;
 mod proc_env;
@@ -88,6 +90,7 @@ pub(crate) fn emit_subns_call(
         "cpu" => cpu::try_emit_method(out, method, args, ctx),
         "gpu" => gpu::try_emit_method(out, method, args, ctx),
         "disk" => disk::try_emit_method(out, method, args, ctx),
+        "net" => net::try_emit_method(out, method, args, ctx),
         _ => false,
     };
     if !handled {

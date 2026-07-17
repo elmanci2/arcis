@@ -17,7 +17,7 @@ The current implementation is split across focused modules:
 - `crates/arcis-codegen/src/builtin.rs` — `print` and `input`.
 - `crates/arcis-codegen/src/method.rs` — array / string method dispatch.
 - `crates/arcis-codegen/src/sys/` — `sys.*` builtins, dispatched across
-  ten submodules:
+  eleven submodules:
   - `sys/mod.rs` — top-level dispatcher (`emit_call`, `emit_member`,
     `emit_subns_call`), shared `emit_arg_ref` helper, the
     `emit_linux_gated` helper, and the verbatim fallback for unknown
@@ -37,6 +37,8 @@ The current implementation is split across focused modules:
   - `sys/cpu.rs` — CPU info (`sys.cpu.model`/`brand`/...).
   - `sys/gpu.rs` — GPU info (`sys.gpu.list`/`name`/`vendor`/`memory`).
   - `sys/disk.rs` — disk info (`sys.disk.list`/`free`/`used`/`total`).
+  - `sys/net.rs` — network info (`sys.net.hostname`/`interfaces`/
+    `ip`/`publicIp`/`online`).
 
 The dispatch point for `sys.<X>(...)` is `expr.rs` → `emit_call`, which
 detects the `sys` namespace identifier and forwards to

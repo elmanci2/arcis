@@ -1,6 +1,6 @@
 // 05_files.tsr — `sys.*` filesystem builtins.
 //
-// `sys` codegen is split into ten submodules (see
+// `sys` codegen is split into eleven submodules (see
 // `crates/arcis-codegen/src/sys/`):
 //
 //   Top-level `sys.X(args)`:
@@ -21,6 +21,7 @@
 //     - `cpu`     — model, brand, frequency, usage, cores
 //     - `gpu`     — list, name, vendor, memory
 //     - `disk`    — list, free, used, total
+//     - `net`     — hostname, interfaces, ip, publicIp, online
 //
 // They are available without any `import`.
 //
@@ -287,4 +288,19 @@ if (disks.length > 0) {
 print("disk.free(/):  " + sys.disk.free("/") + " bytes");
 print("disk.used(/):  " + sys.disk.used("/") + " bytes");
 print("disk.total(/): " + sys.disk.total("/") + " bytes");
+
+// ------------------------------------------------------------
+// 18. sys.net.* (Linux-first via hostname / ip / curl / ping).
+// ------------------------------------------------------------
+
+print("--- sys.net demo ---");
+print("hostname: " + sys.net.hostname());
+print("localIp: " + sys.net.ip());
+let ifs: string[] = sys.net.interfaces();
+print("interfaces count: " + ifs.length);
+if (ifs.length > 0) {
+    print("ifs[0]:   " + ifs[0]);
+}
+print("online:   " + sys.net.online());
+print("publicIp: " + sys.net.publicIp());
 

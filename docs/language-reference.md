@@ -113,6 +113,7 @@ type         = "string" | "number" | "boolean" | "void" | IDENT
 | `sys.cpu.*`          | ✔ `model`/`brand`/`frequency`/`usage`/`cores`. Linux-first via `/proc/cpuinfo`+`/proc/stat`; `usage` blocks 100ms. |
 | `sys.gpu.*`          | ✔ `list`/`name`/`vendor`/`memory`. Linux-first via `lspci` and `nvidia-smi`. |
 | `sys.disk.*`         | ✔ `list`/`free`/`used`/`total`. Cross-platform via `df`. |
+| `sys.net.*`          | ✔ `hostname`/`interfaces`/`ip`/`publicIp`/`online`. Linux-first via `hostname`, `ip`, `curl`, `ping`. |
 | Arrays + object literals | ✔ (with declared type) |
 | Array methods        | `find`, `filter`, `map`, `reduce`, `pop`, `push`, `unshift` |
 | String methods       | `toUpperCase`, `toLowerCase`, `trim`, `substring`, `indexOf`, `includes`, `charAt`, `.length` |

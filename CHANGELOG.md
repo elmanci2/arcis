@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used by every Linux-first builtin.
 - 29 new integration tests for the sub-namespace builtins (68
   sys_codegen tests total).
+- New `sys.net.*` sub-namespace (`crates/arcis-codegen/src/sys/net.rs`):
+  `hostname` (subprocess `hostname`), `interfaces` (parses
+  `ip -o -4 addr show` into `iface=X;ip=Y` rows), `ip` (first token of
+  `hostname -I`), `publicIp` (`curl -s --max-time 5 ifconfig.me`),
+  `online` (`ping -c 1 -W 3 1.1.1.1` with `Stdio::null()` so ping's
+  chatter doesn't leak into program output). Linux-first; other
+  platforms get `""` / `[]` / `false`.
+- 5 new integration tests for `sys.net.*` (73 sys_codegen tests total).
 - Split `sys` codegen into three submodules under
   `crates/arcis-codegen/src/sys/`: `fs` (file/dir IO), `path` (path
   queries) and `env` (process / environment). Each submodule exposes a

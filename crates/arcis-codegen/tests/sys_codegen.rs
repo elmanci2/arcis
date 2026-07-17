@@ -573,3 +573,52 @@ fn unknown_sys_subns_method_is_re_emitted() {
     let out = emit(r#"sys.os.notARealMethod();"#);
     assert!(out.contains("sys.os.notARealMethod"), "{out}");
 }
+
+// ── sys.net sub-namespace ────────────────────────────────────────────────
+
+#[test]
+fn sys_net_hostname() {
+    let out = emit(r#"let h: string = sys.net.hostname();"#);
+    assert!(out.contains("Command::new(\"hostname\")"), "{out}");
+    assert!(out.contains(".trim().to_string()"), "{out}");
+}
+
+#[test]
+fn sys_net_interfaces_parses_ip_addr() {
+    let out = emit(r#"let ifs: string[] = sys.net.interfaces();"#);
+    assert!(out.contains("cfg!(target_os = \"linux\")"), "{out}");
+    assert!(out.contains("Command::new(\"ip\")"), "{out}");
+    assert!(out.contains("\"-o\""), "{out}");
+    assert!(out.contains("\"-4\""), "{out}");
+    assert!(out.contains("\"addr\""), "{out}");
+    assert!(out.contains("format!(\"iface={};ip={}\""), "{out}");
+}
+
+#[test]
+fn sys_net_ip_uses_hostname_dash_I() {
+    let out = emit(r#"let ip: string = sys.net.ip();"#);
+    assert!(out.contains("cfg!(target_os = \"linux\")"), "{out}");
+    assert!(out.contains("Command::new(\"hostname\")"), "{out}");
+    assert!(out.contains("\"-I\""), "{out}");
+    assert!(out.contains(".split_whitespace()"), "{out}");
+}
+
+#[test]
+fn sys_net_public_ip_via_ifconfig_me() {
+    let out = emit(r#"let ip: string = sys.net.publicIp();"#);
+    assert!(out.contains("Command::new(\"curl\")"), "{out}");
+    assert!(out.contains("\"--max-time\""), "{out}");
+    assert!(out.contains("\"https://ifconfig.me\""), "{out}");
+    assert!(out.contains(".trim().to_string()"), "{out}");
+}
+
+#[test]
+fn sys_net_online_pings_with_silenced_io() {
+    let out = emit(r#"let ok: boolean = sys.net.online();"#);
+    assert!(out.contains("cfg!(target_os = \"linux\")"), "{out}");
+    assert!(out.contains("Command::new(\"ping\")"), "{out}");
+    assert!(out.contains("\"-c\""), "{out}");
+    assert!(out.contains("\"1.1.1.1\""), "{out}");
+    assert!(out.contains("Stdio::null()"), "{out}");
+    assert!(out.contains(".map(|__s| __s.success())"), "{out}");
+}

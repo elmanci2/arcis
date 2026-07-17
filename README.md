@@ -113,28 +113,31 @@ Welcome to the 21st century
 
 ## Examples
 
-The `examples/` directory holds one focused `.tsr` program per language
-feature. Run any of them with:
+Each example lives in its own folder under `examples/`, with a `.tsr`
+source file and a `README.md` that explains what the program does,
+why it does it that way, how to run it, and what output to expect.
+
+Run any example with:
 
 ```bash
-arcis run examples/<name>.tsr
+arcis run examples/<folder>/<file>.tsr
 ```
 
-| File                              | What it shows                                                                  |
-|-----------------------------------|---------------------------------------------------------------------------------|
-| `examples/01_hello.tsr`           | The smallest possible Arcis program                                             |
-| `examples/02_basics.tsr`          | `let` / `const`, primitive types, operators, comments                           |
-| `examples/03_functions.tsr`       | Function declarations, recursion (factorial, Fibonacci), helpers, return values  |
-| `examples/04_if_else.tsr`         | `if` / `else if` / `else` chains, nested conditions, logical combinations          |
-| `examples/05_files.tsr`          | `sys.*` filesystem builtins (`readFile`, `writeFile`, `mkdir`, `listDir`, etc.) |
-| `examples/arrays.tsr`             | Array literals, indexing, `find` / `filter` / `map` / `reduce` / `pop` / `push`  |
-| `examples/strings.tsr`            | All seven string methods + `for-of` iteration over arrays                       |
-| `examples/objetos.tsr`            | Object literals, inline object types, field access, arrays of objects           |
-| `examples/reasignacion.tsr`       | Reassigning `let` bindings (variables, swap, strings)                          |
-| `examples/tier2.tsr`              | `while` / `for` / `break` / `continue`, nested loops, `.length` on strings       |
-| `examples/input.tsr`              | The `input()` builtin (reads one line of stdin)                                 |
-| `examples/completo.tsr`           | A single-file kitchen-sink program that uses most features                      |
-| `examples/mods/main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
+| Folder                                | Source                | What it shows                                                                  |
+|---------------------------------------|-----------------------|---------------------------------------------------------------------------------|
+| [`examples/01-hello/`](examples/01-hello/README.md)               | `hello.tsr`           | The smallest possible Arcis program                                             |
+| [`examples/02-basics/`](examples/02-basics/README.md)             | `basics.tsr`          | `let` / `const`, primitive types, operators, comments                           |
+| [`examples/03-functions/`](examples/03-functions/README.md)       | `functions.tsr`       | Function declarations, recursion (factorial, Fibonacci), helpers, return values  |
+| [`examples/04-if-else/`](examples/04-if-else/README.md)           | `if-else.tsr`         | `if` / `else if` / `else` chains, nested conditions, logical combinations         |
+| [`examples/05-files/`](examples/05-files/README.md)               | `files.tsr`           | `sys.*` filesystem builtins (`readFile`, `writeFile`, `mkdir`, `listDir`, etc.) |
+| [`examples/arrays/`](examples/arrays/README.md)                   | `arrays.tsr`          | Arrays and the seven method builtins (`find` / `filter` / `map` / `reduce` / …) |
+| [`examples/strings/`](examples/strings/README.md)                 | `strings.tsr`         | All seven string methods + `for-of` iteration over arrays                       |
+| [`examples/objetos/`](examples/objetos/README.md)                 | `objetos.tsr`         | Object literals, inline object types, field access, arrays of objects           |
+| [`examples/reasignacion/`](examples/reasignacion/README.md)       | `reasignacion.tsr`    | Reassigning `let` bindings (variables, swap, strings)                           |
+| [`examples/tier2/`](examples/tier2/README.md)                     | `tier2.tsr`           | `while` / `for` / `break` / `continue`, nested loops, `.length` on strings        |
+| [`examples/input/`](examples/input/README.md)                     | `input.tsr`           | The `input()` builtin (reads one line of stdin)                                 |
+| [`examples/completo/`](examples/completo/README.md)               | `completo.tsr`        | A single-file kitchen-sink program that uses most features                       |
+| [`examples/mods/`](examples/mods/README.md)                       | `main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
 
 ## Modules
 

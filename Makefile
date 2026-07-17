@@ -54,7 +54,7 @@ test-cli-check: ## run only the `check` CLI tests
 # ── Smoke tests against examples/ ──────────────────────────────────────────
 
 smoke: ## end-to-end smoke test against the examples/ directory
-	cargo run --quiet -- run examples/completo.tsr
+	cargo run --quiet -- run examples/completo/completo.tsr
 	@echo "---"
 	cargo run --quiet -- run examples/mods
 

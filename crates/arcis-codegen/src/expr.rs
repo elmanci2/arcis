@@ -59,10 +59,10 @@ fn emit_unary(out: &mut String, op: UnaryOp, operand: &Expr, ctx: &Ctx) {
 }
 
 fn emit_member(out: &mut String, object: &Expr, property: &str, ctx: &Ctx) {
-    // Builtin `sys.args` → program arguments (Vec<String>).
+    // Builtin `sys.X` member accesses (e.g. `sys.args`).
     if let Expr::Ident(module) = object {
-        if module == "sys" && property == "args" {
-            out.push_str("std::env::args().collect::<Vec<String>>()");
+        if module == "sys" {
+            crate::sys::emit_member(out, property);
             return;
         }
     }
@@ -202,7 +202,7 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
     if let Expr::Member { object, property } = callee {
         if let Expr::Ident(module) = object.as_ref() {
             if module == "sys" {
-                crate::sys::emit(out, property, args, ctx);
+                crate::sys::emit_call(out, property, args, ctx);
                 return;
             }
         }

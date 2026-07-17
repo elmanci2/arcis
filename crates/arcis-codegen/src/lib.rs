@@ -32,7 +32,9 @@
 //!   index, binary, etc.).
 //! - [`builtin`](self::builtin) — `print`, `input`, callback helpers.
 //! - [`method`](self::method) — array / string method dispatch.
-//! - [`sys`](self::sys) — `sys.*` builtins (filesystem, argv).
+//! - [`sys`](self::sys) — `sys.*` builtins, split across
+//!   [`sys::fs`](self::sys::fs) (file/dir IO), [`sys::path`](self::sys::path)
+//!   (path queries), and [`sys::env`](self::sys::env) (process/argv).
 
 use arcis_linker::Module;
 

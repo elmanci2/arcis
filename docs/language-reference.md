@@ -103,7 +103,9 @@ type         = "string" | "number" | "boolean" | "void" | IDENT
 | `for (x of arr)`     | ✔                |
 | `break`, `continue`  | ✔                |
 | `print`, `input`     | ✔ (builtins)     |
-| `sys.*`              | ✔ (filesystem + `argv`) |
+| `sys.*` (filesystem) | ✔ `readFile`/`writeFile`/`readBytes`/`writeBytes`/`appendFile`/`createFile`/`deleteFile`/`deleteDir`/`deleteDirAll`/`mkdir`/`listDir`/`copy`/`move`/`rename` |
+| `sys.*` (path)       | ✔ `exists`/`isFile`/`isDir`/`fileSize`/`fileInfo`/`absolute`/`relative`/`createSymlink`/`readLink` |
+| `sys.*` (env)        | ✔ `args`/`currentDir`/`changeDir`/`tempDir`/`homeDir`/`executablePath` |
 | Arrays + object literals | ✔ (with declared type) |
 | Array methods        | `find`, `filter`, `map`, `reduce`, `pop`, `push`, `unshift` |
 | String methods       | `toUpperCase`, `toLowerCase`, `trim`, `substring`, `indexOf`, `includes`, `charAt`, `.length` |

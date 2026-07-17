@@ -17,6 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Module-level doc-comments at the top of each phase crate translated to English.
 
 ### Added
+- Split `sys` codegen into three submodules under
+  `crates/arcis-codegen/src/sys/`: `fs` (file/dir IO), `path` (path
+  queries) and `env` (process / environment). Each submodule exposes a
+  `try_emit(...) -> bool` and the dispatcher (`sys::emit_call`) tries
+  each in order before falling back to a verbatim re-emit so `rustc`
+  can report unknown `sys.X`.
+- New `sys.*` builtins:
+  - filesystem: `copy`, `move`, `rename`, `deleteDir`, `deleteDirAll`,
+    `createFile`, `readBytes`, `writeBytes`, `appendFile`.
+  - path: `isFile`, `isDir`, `fileSize`, `fileInfo` (returns a summary
+    string `size=…;is_file=…;is_dir=…;modified_secs=…`), `absolute`,
+    `relative`, `createSymlink` (canonicalises the target so
+    `sys.exists(link)` resolves correctly), `readLink`.
+  - environment: `currentDir`, `changeDir`, `tempDir`, `homeDir`
+    (resolves `HOME` / `USERPROFILE` at runtime via `cfg!(windows)`),
+    `executablePath`.
+- New integration test file `crates/arcis-codegen/tests/sys_codegen.rs`
+  covering every `sys.*` builtin (31 tests). The dispatcher fallback
+  for unknown `sys.X` is also covered.
 - Workspace-level `Cargo.toml` with shared metadata and dependencies.
 - `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml` configuration.
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.

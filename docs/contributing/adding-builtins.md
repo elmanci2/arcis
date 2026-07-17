@@ -12,53 +12,71 @@ operator extensions, and type-coercion hooks.
 
 ## Where builtins live in code
 
-The current implementation lives in **one place**, in
-`crates/arcis-codegen/src/lib.rs`. The relevant functions are:
+The current implementation is split across focused modules:
 
-- `emit_expr` — top-level emitter for expressions. It pattern-matches
-  on the expression kind to translate builtins before the generic
-  `f(args)` fallback.
-- `emit_sys_call` — translates `sys.<fn>(...)` calls into calls into
-  `std::fs::*` and `std::env::*`.
+- `crates/arcis-codegen/src/builtin.rs` — `print` and `input`.
+- `crates/arcis-codegen/src/method.rs` — array / string method dispatch.
+- `crates/arcis-codegen/src/sys/` — `sys.*` builtins, dispatched across
+  three submodules:
+  - `sys/mod.rs` — top-level dispatcher (`emit_call`, `emit_member`),
+    shared `emit_arg_ref` helper, and the verbatim fallback for unknown
+    `sys.X` calls.
+  - `sys/fs.rs` — file-system operations (read, write, create, delete,
+    copy, move, list).
+  - `sys/path.rs` — path queries and transformations (exists, isFile,
+    isDir, size, absolute, relative, symlink).
+  - `sys/env.rs` — process / environment queries (currentDir, tempDir,
+    homeDir, executablePath, changeDir).
 
-In phase 2 these will be moved into focused modules:
-`crates/arcis-codegen/src/builtin.rs` (for `print`/`input`) and the
-method dispatch in `crates/arcis-codegen/src/method.rs` (for array /
-string methods).
+The dispatch point for `sys.<X>(...)` is `expr.rs` → `emit_call`, which
+detects the `sys` namespace identifier and forwards to
+`crate::sys::emit_call`. Unknown `sys.X` are re-emitted verbatim so
+`rustc` produces the diagnostic.
 
 ## Adding a new `sys.*` builtin
 
-1. **Open** `crates/arcis-codegen/src/lib.rs` (or `builtin.rs` once
-   that file exists in phase 2).
-2. **Find** the `emit_sys_call` function.
-3. **Add** a new match arm for your builtin name. Example:
+1. **Pick the right submodule.** File/dir IO goes in
+   `crates/arcis-codegen/src/sys/fs.rs`. Path queries and
+   transformations go in `sys/path.rs`. Process/environment lookups go
+   in `sys/env.rs`. If you are unsure, look at the doc-comment table at
+   the top of each submodule.
+2. **Add a match arm** to the appropriate `try_emit(...)` (or
+   `try_emit_call(...)`) function. Example, in `sys/fs.rs`:
 
    ```rust
-   match property {
-       // existing arms ...
-       "readFile"  => { /* emit std::fs::read_to_string(...) */ }
-       "writeFile" => { /* emit std::fs::write(...) */ }
-
-       // NEW builtin: append the contents of `b` to the file at path `a`.
-       "appendFile" => {
-           out.push_str("std::fs::OpenOptions::new()");
-           out.push_str(".append(true).create(true).open(");
-           emit_arg_ref(out, &args[0], ctx);
-           out.push_str(").expect(\"open\")");
-           // Write `b` through the OpenOptions file by chaining .write_all.
-           // ...
+   "appendFile" => {
+       // Bind the opened file into a local so we can take `&mut`
+       // and call `write_all` via the qualified trait path.
+       out.push_str(
+           "({ let mut __f = std::fs::OpenOptions::new()\
+            .append(true).create(true).open(",
+       );
+       emit_arg_ref(out, args.first(), ctx);
+       out.push_str(").unwrap(); std::io::Write::write_all(&mut __f, ");
+       if let Some(t) = args.get(1) {
+           crate::expr::emit(out, t, ctx);
+           out.push_str(".as_bytes()");
+       } else {
+           out.push_str("b\"\"");
        }
-
-       _ => { /* unknown sys.X — emit as-is */ }
+       out.push_str(").unwrap(); })");
+       true
    }
    ```
 
-4. **Document** the builtin:
-   - Add an entry to the "Supported subset" table in
-     `docs/language-reference.md`.
+   The match arm must return `true` to claim the property; if it falls
+   through to `_ => false`, the dispatcher will continue to the next
+   submodule and eventually to the verbatim fallback.
+
+3. **Document** the builtin:
+   - Add a row to the table at the top of the submodule's doc-comment.
+   - Update the `sys.*` row in
+     `docs/language-reference.md` if you added a new category.
    - Mention it in the README under the relevant section.
-5. **Add a test** in `tests/codegen.rs` that lexes + parses + generates
-   a snippet using the new builtin, and asserts on the emitted code.
+4. **Add a test** in `crates/arcis-codegen/tests/sys_codegen.rs`. The
+   test lexes + parses + generates Rust for a snippet invoking the
+   builtin, and asserts that the emitted source contains the expected
+   `std::*` call. Use the existing tests as templates.
 
 ## Adding a new `print`-like function
 

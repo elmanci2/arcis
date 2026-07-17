@@ -1,16 +1,23 @@
 // 05_files.tsr — `sys.*` filesystem builtins.
 //
-// `sys.readFile`, `sys.writeFile`, `sys.exists`, `sys.listDir`,
-// `sys.mkdir`, `sys.deleteFile` translate to the Rust standard library.
+// `sys` codegen is split into three submodules (see
+// `crates/arcis-codegen/src/sys/`):
+//
+//   - `fs`   — readFile, writeFile, readBytes, writeBytes, appendFile,
+//              createFile, deleteFile, deleteDir, deleteDirAll, mkdir,
+//              listDir, copy, move, rename
+//   - `path` — exists, isFile, isDir, fileSize, fileInfo, absolute,
+//              relative, createSymlink, readLink
+//   - `env`  — sys.args (member), currentDir, changeDir, tempDir,
+//              homeDir, executablePath
+//
 // They are available without any `import`.
 //
-// `sys.args` exposes the program arguments as `string[]`.
-//
 // Run with:
-//   arcis run examples/05_files.tsr
+//   arcis run examples/05-files/files.tsr
 //
 // This example creates a temporary `arcis_fs_demo/` directory next to the
-// binary, writes a file into it, reads it back, and then cleans up.
+// binary, exercises every builtin family above, and cleans up.
 
 let dir: string = "arcis_fs_demo";
 let filePath: string = dir + "/note.txt";
@@ -81,3 +88,78 @@ sys.deleteFile(filePath);
 print("deleted file: " + filePath);
 print("file still exists? " + sys.exists(filePath));
 print("dir still exists? " + sys.exists(dir) + " (left in place — rm -rf to remove)");
+
+// ------------------------------------------------------------
+// 8. New file operations: copy, fileSize, isFile, isDir, append,
+//    move, createFile, deleteDir. Demonstrates the `sys` codegen split
+//    into `fs` and `path` submodules.
+// ------------------------------------------------------------
+
+// Re-create the file we just deleted so the rest of the example has
+// something to operate on.
+sys.writeFile(filePath, "Hello (round 2).\n");
+
+// 8a. sys.copy(src, dst) — duplicate the file.
+let backup: string = filePath + ".bak";
+sys.copy(filePath, backup);
+print("copied to: " + backup);
+print("backup exists? " + sys.exists(backup));
+
+// 8b. sys.fileSize(p) → number (bytes), sys.isFile(p) / sys.isDir(p) → bool.
+print("size of " + filePath + ": " + sys.fileSize(filePath));
+print("is " + filePath + " a file? " + sys.isFile(filePath));
+print("is " + dir + " a directory? " + sys.isDir(dir));
+
+// 8c. sys.appendFile(p, text) — append a line.
+sys.appendFile(filePath, "Appended line.\n");
+print("--- after append ---");
+print(sys.readFile(filePath));
+print("--- end after append ---");
+
+// 8d. sys.move(src, dst) — also exposed as sys.rename.
+let moved: string = filePath + ".moved";
+sys.move(filePath, moved);
+print("moved to: " + moved + ", exists? " + sys.exists(moved));
+print("original gone? " + !sys.exists(filePath));
+
+// 8e. sys.createFile(p) — touch an empty file, then sys.deleteFile it.
+let touched: string = dir + "/touched.txt";
+sys.createFile(touched);
+print("created empty file: " + touched + ", size=" + sys.fileSize(touched));
+sys.deleteFile(touched);
+
+// 8f. sys.fileInfo(p) → string summary.
+print("fileInfo of " + moved + ": " + sys.fileInfo(moved));
+
+// ------------------------------------------------------------
+// 9. Environment / process queries: currentDir, tempDir, homeDir,
+//    executablePath.
+// ------------------------------------------------------------
+
+print("--- environment ---");
+print("currentDir: " + sys.currentDir());
+print("tempDir:    " + sys.tempDir());
+print("homeDir:    " + sys.homeDir());
+print("executable: " + sys.executablePath());
+
+// ------------------------------------------------------------
+// 10. Path transformations + cleanup.
+//     absolute() falls back to the literal path if the file does not
+//     exist; relative() strips the cwd prefix when possible.
+// ------------------------------------------------------------
+
+print("absolute(./" + dir + "): " + sys.absolute("./" + dir));
+print("relative(" + sys.currentDir() + "/" + dir + "): " + sys.relative(dir));
+
+// 10a. sys.createSymlink(target, link) + sys.readLink.
+let link: string = dir + "/note.moved.lnk";
+sys.createSymlink(moved, link);
+print("symlink? " + sys.exists(link) + ", points to: " + sys.readLink(link));
+sys.deleteFile(link);
+
+// 10b. Final cleanup: remove every file in the directory and the dir itself.
+sys.deleteFile(backup);
+sys.deleteFile(moved);
+sys.deleteDir(dir);
+print("dir removed? " + !sys.exists(dir));
+

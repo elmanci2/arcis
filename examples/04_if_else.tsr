@@ -1,0 +1,119 @@
+// 04_if_else.tsr — `if` / `else if` / `else` chains.
+//
+// Covers:
+//   - Plain `if`
+//   - `if` / `else`
+//   - `if` / `else if` / `else` chains
+//   - Nested conditions
+//   - Logical combinations (`&&`, `||`, `!`)
+//   - Comparison operators in conditions
+
+// ============================================================
+// 1. Plain `if`
+// ============================================================
+
+let temperature: number = 25;
+if (temperature > 30) {
+    print("Hace calor");
+}
+
+// ============================================================
+// 2. `if` / `else`
+// ============================================================
+
+let age: number = 17;
+if (age >= 18) {
+    print("Mayor de edad");
+} else {
+    print("Menor de edad");
+}
+
+// ============================================================
+// 3. `if` / `else if` / `else` chain
+// ============================================================
+
+let score: number = 85;
+let grade: string = "";
+if (score >= 90) {
+    grade = "A";
+} else if (score >= 80) {
+    grade = "B";
+} else if (score >= 70) {
+    grade = "C";
+} else if (score >= 60) {
+    grade = "D";
+} else {
+    grade = "F";
+}
+print("Score " + score + " → grade " + grade);
+
+// ============================================================
+// 4. Nested conditions
+// ============================================================
+
+let user: string = "admin";
+let loggedIn: boolean = true;
+
+if (loggedIn) {
+    if (user == "admin") {
+        print("Bienvenido, administrador");
+    } else {
+        print("Bienvenido, usuario");
+    }
+} else {
+    print("Por favor, iniciá sesión");
+}
+
+// ============================================================
+// 5. Logical combinations
+// ============================================================
+
+let age2: number = 25;
+let hasLicense: boolean = true;
+let isSuspended: boolean = false;
+
+// Can drive if: 18+ AND has license AND NOT suspended.
+let canDrive: boolean = age2 >= 18 && hasLicense && !isSuspended;
+print("can drive? " + canDrive);
+
+// OR short-circuits when the first operand is true.
+let accessGranted: boolean = (user == "admin") || (age2 >= 21);
+print("access granted? " + accessGranted);
+
+// ============================================================
+// 6. Function with multiple branches
+// ============================================================
+
+function describe(n: number): string {
+    if (n < 0) {
+        return "negativo";
+    } else if (n == 0) {
+        return "cero";
+    } else if (n < 10) {
+        return "pequeño positivo";
+    } else if (n < 100) {
+        return "mediano";
+    } else {
+        return "grande";
+    }
+}
+
+print(describe(-5));     // negativo
+print(describe(0));      // cero
+print(describe(7));      // pequeño positivo
+print(describe(42));     // mediano
+print(describe(500));    // grande
+
+// ============================================================
+// 7. `if` as a one-line guard
+// ============================================================
+
+let maybe: number = 0;
+let divisor: number = 0;
+
+if (divisor != 0) {
+    maybe = 100 / divisor;
+    print("result: " + maybe);
+} else {
+    print("cannot divide by zero");
+}

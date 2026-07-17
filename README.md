@@ -111,6 +111,31 @@ Hello World in the year 2026
 Welcome to the 21st century
 ```
 
+## Examples
+
+The `examples/` directory holds one focused `.tsr` program per language
+feature. Run any of them with:
+
+```bash
+arcis run examples/<name>.tsr
+```
+
+| File                              | What it shows                                                                  |
+|-----------------------------------|---------------------------------------------------------------------------------|
+| `examples/01_hello.tsr`           | The smallest possible Arcis program                                             |
+| `examples/02_basics.tsr`          | `let` / `const`, primitive types, operators, comments                           |
+| `examples/03_functions.tsr`       | Function declarations, recursion (factorial, Fibonacci), helpers, return values  |
+| `examples/04_if_else.tsr`         | `if` / `else if` / `else` chains, nested conditions, logical combinations          |
+| `examples/05_files.tsr`          | `sys.*` filesystem builtins (`readFile`, `writeFile`, `mkdir`, `listDir`, etc.) |
+| `examples/arrays.tsr`             | Array literals, indexing, `find` / `filter` / `map` / `reduce` / `pop` / `push`  |
+| `examples/strings.tsr`            | All seven string methods + `for-of` iteration over arrays                       |
+| `examples/objetos.tsr`            | Object literals, inline object types, field access, arrays of objects           |
+| `examples/reasignacion.tsr`       | Reassigning `let` bindings (variables, swap, strings)                          |
+| `examples/tier2.tsr`              | `while` / `for` / `break` / `continue`, nested loops, `.length` on strings       |
+| `examples/input.tsr`              | The `input()` builtin (reads one line of stdin)                                 |
+| `examples/completo.tsr`           | A single-file kitchen-sink program that uses most features                      |
+| `examples/mods/main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
+
 ## Modules
 
 By convention the entry point is **`main.tsr`**. Without arguments, `arcis run`

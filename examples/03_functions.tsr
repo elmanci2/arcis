@@ -1,0 +1,124 @@
+// 03_functions.tsr — function declarations.
+//
+// Covers:
+//   - Function with no parameters
+//   - Function with parameters and explicit return type
+//   - Returning a value with `return`
+//   - Recursion
+//   - Helper functions
+//   - Functions taking arrays
+//   - Functions returning objects
+
+// ============================================================
+// 1. No parameters, no return value
+// ============================================================
+
+function greet(): void {
+    print("Hello from Arcis!");
+}
+
+greet();
+greet();
+
+// ============================================================
+// 2. Parameters and return values
+// ============================================================
+
+function square(x: number): number {
+    return x * x;
+}
+
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+print("square(5) = " + square(5));      // 25
+print("add(3, 4) = " + add(3, 4));      // 7
+
+// ============================================================
+// 3. Recursion: factorial
+// ============================================================
+
+function factorial(n: number): number {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+print("5! = " + factorial(5));     // 120
+print("10! = " + factorial(10));   // 3628800
+
+// ============================================================
+// 4. Recursion: Fibonacci
+// ============================================================
+
+function fib(n: number): number {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+print("fib(0..10):");
+for (let i: number = 0; i <= 10; i = i + 1) {
+    print("  fib(" + i + ") = " + fib(i));
+}
+
+// ============================================================
+// 5. Functions taking arrays
+// ============================================================
+
+function sum(arr: number[]): number {
+    let total: number = 0;
+    for (let x of arr) {
+        total = total + x;
+    }
+    return total;
+}
+
+function average(arr: number[]): number {
+    return sum(arr) / arr.length;
+}
+
+let data: number[] = [10, 20, 30, 40, 50];
+print("sum(data) = " + sum(data));           // 150
+print("avg(data) = " + average(data));       // 30
+
+// ============================================================
+// 6. Functions returning objects
+// ============================================================
+
+function makePoint(x: number, y: number): { x: number, y: number } {
+    return { x: x, y: y };
+}
+
+function distance(a: { x: number, y: number }, b: { x: number, y: number }): number {
+    let dx: number = a.x - b.x;
+    let dy: number = a.y - b.y;
+    return (dx * dx + dy * dy);   // squared distance, sqrt-free for v1
+}
+
+let p1: { x: number, y: number } = makePoint(0, 0);
+let p2: { x: number, y: number } = makePoint(3, 4);
+print("p1 = (" + p1.x + ", " + p1.y + ")");
+print("p2 = (" + p2.x + ", " + p2.y + ")");
+print("dist² = " + distance(p1, p2));   // 25
+
+// ============================================================
+// 7. Forward references and order independence
+// ============================================================
+
+// `entry` is declared after `helper` but can still call it. Arcis
+// resolves names at codegen time, so source order does not matter.
+// (We avoid the name `main` because the compiler wraps the program in
+// `fn main()` automatically.)
+function entry(): void {
+    print("helper() returned: " + helper());
+}
+
+function helper(): string {
+    return "ok";
+}
+
+entry();

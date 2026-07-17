@@ -1,0 +1,77 @@
+// 02_basics.tsr — variables, primitive types, operators, comments.
+//
+// Covers:
+//   - `let` (mutable) vs `const` (immutable-ish)
+//   - Primitive types: `string`, `number`, `boolean`, `void`
+//   - Explicit type annotations vs inference
+//   - Line (`//`) and block (`/* ... */`) comments
+//   - Arithmetic, comparison, and logical operators
+//   - String concatenation with `+`
+
+// ============================================================
+// 1. `let` vs `const`
+// ============================================================
+
+let counter: number = 0;          // mutable (rebindable)
+counter = counter + 1;             // OK
+counter = counter + 1;
+print("counter after two ++: " + counter);   // 2
+
+const PI: number = 3.14159;        // treated as immutable
+print("PI = " + PI);
+
+// ============================================================
+// 2. Primitive types and inference
+// ============================================================
+
+let name: string = "Arcis";        // explicit annotation
+let version = 0.1;                  // inferred: number
+let isStable: boolean = true;       // explicit annotation
+
+print("name: " + name);
+print("version: " + version);
+print("isStable: " + isStable);
+
+// ============================================================
+// 3. Arithmetic operators
+// ============================================================
+
+let a: number = 10;
+let b: number = 3;
+print("a + b = " + (a + b));       // 13
+print("a - b = " + (a - b));       // 7
+print("a * b = " + (a * b));       // 30
+print("a / b = " + (a / b));       // 3.3333...
+print("a % b = " + (a % b));       // 1
+
+// ============================================================
+// 4. Comparison and logical operators
+// ============================================================
+
+let x: number = 5;
+let y: number = 10;
+
+print("x == y: " + (x == y));      // false
+print("x != y: " + (x != y));      // true
+print("x < y:  " + (x < y));       // true
+print("x >= y: " + (x >= y));      // false
+
+let inRange: boolean = (x > 0) && (y < 100);
+let outOfRange: boolean = (x < 0) || (y > 100);
+let notReady: boolean = !isStable;
+
+print("x in (0, 100): " + inRange);
+print("x out of range: " + outOfRange);
+print("!isStable: " + notReady);
+
+// ============================================================
+// 5. Block comments
+// ============================================================
+
+/*
+   This whole block is a comment. Arcis supports C-style block comments,
+   which is handy for temporarily disabling sections of code.
+*/
+
+let enabled: boolean = true;
+print("enabled: " + enabled);

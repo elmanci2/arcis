@@ -255,7 +255,12 @@ impl Parser {
         Ok(Stmt::Return(Some(expr)))
     }
 
-    /// `if (cond) { then } else { els }`
+    /// `if (cond) { then } [else if (cond2) { ... }]* [else { els }]`
+    ///
+    /// Supports `else if` chains by recursively parsing the next `if`
+    /// statement when we see `else if`. The chain is flattened into a
+    /// single `Stmt::If` with the recursive `else` branch as another
+    /// `Stmt::If`.
     pub(crate) fn parse_if(&mut self) -> Result<Stmt, ParseError> {
         self.advance(); // if
         self.expect(&TokenKind::LParen, "`(` after `if`")?;
@@ -269,13 +274,21 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "`}` closing then-block")?;
 
         let else_branch = if self.matches(&TokenKind::Else) {
-            self.expect(&TokenKind::LBrace, "`{` opening else-block")?;
-            let mut stmts = Vec::new();
-            while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
-                stmts.push(self.parse_stmt()?);
+            // `else if (cond) { ... }` — recurse into another `if` so the
+            // chain is parsed naturally. The desugaring of `else if` to
+            // nested `Stmt::If` is what the codegen already expects.
+            if self.check(&TokenKind::If) {
+                let inner_if = self.parse_if()?;
+                Some(vec![inner_if])
+            } else {
+                self.expect(&TokenKind::LBrace, "`{` opening else-block")?;
+                let mut stmts = Vec::new();
+                while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                    stmts.push(self.parse_stmt()?);
+                }
+                self.expect(&TokenKind::RBrace, "`}` closing else-block")?;
+                Some(stmts)
             }
-            self.expect(&TokenKind::RBrace, "`}` closing else-block")?;
-            Some(stmts)
         } else {
             None
         };

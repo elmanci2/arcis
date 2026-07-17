@@ -1,0 +1,83 @@
+// 05_files.tsr — `sys.*` filesystem builtins.
+//
+// `sys.readFile`, `sys.writeFile`, `sys.exists`, `sys.listDir`,
+// `sys.mkdir`, `sys.deleteFile` translate to the Rust standard library.
+// They are available without any `import`.
+//
+// `sys.args` exposes the program arguments as `string[]`.
+//
+// Run with:
+//   arcis run examples/05_files.tsr
+//
+// This example creates a temporary `arcis_fs_demo/` directory next to the
+// binary, writes a file into it, reads it back, and then cleans up.
+
+let dir: string = "arcis_fs_demo";
+let filePath: string = dir + "/note.txt";
+
+// ------------------------------------------------------------
+// 1. sys.args — program arguments
+// ------------------------------------------------------------
+
+let args: string[] = sys.args;
+print("arg count: " + args.length);
+if (args.length > 0) {
+    print("first arg: " + args[0]);
+}
+
+// ------------------------------------------------------------
+// 2. sys.mkdir — create a directory.
+//    (We guard with `sys.exists` so re-running the example is safe.)
+// ------------------------------------------------------------
+
+if (!sys.exists(dir)) {
+    sys.mkdir(dir);
+    print("created dir: " + dir);
+} else {
+    print("dir already existed: " + dir);
+}
+
+// ------------------------------------------------------------
+// 3. sys.writeFile — write a string to disk
+// ------------------------------------------------------------
+
+sys.writeFile(filePath, "Hello from Arcis!\nLine 2.\n");
+print("wrote file: " + filePath);
+
+// ------------------------------------------------------------
+// 4. sys.exists — check whether a path exists
+// ------------------------------------------------------------
+
+print("file exists? " + sys.exists(filePath));
+print("missing file exists? " + sys.exists("does-not-exist.txt"));
+
+// ------------------------------------------------------------
+// 5. sys.readFile — read the file back
+// ------------------------------------------------------------
+
+let content: string = sys.readFile(filePath);
+print("--- content of " + filePath + " ---");
+print(content);
+print("--- end content ---");
+
+// ------------------------------------------------------------
+// 6. sys.listDir — list entries in a directory
+// ------------------------------------------------------------
+
+let entries: string[] = sys.listDir(dir);
+print("entries in " + dir + ":");
+for (let name of entries) {
+    print("  " + name);
+}
+
+// ------------------------------------------------------------
+// 7. sys.deleteFile — clean up the file we created.
+//    (Removing a non-empty directory needs `std::fs::remove_dir`, which
+//    `sys.deleteFile` does not currently wrap — so we leave the dir in
+//    place. `rm -rf arcis_fs_demo` cleans it up.)
+// ------------------------------------------------------------
+
+sys.deleteFile(filePath);
+print("deleted file: " + filePath);
+print("file still exists? " + sys.exists(filePath));
+print("dir still exists? " + sys.exists(dir) + " (left in place — rm -rf to remove)");

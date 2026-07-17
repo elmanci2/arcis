@@ -101,6 +101,7 @@ fn emit_let(
         reassigned: ctx.reassigned,
         types: ctx.types,
         current_let_type: ty,
+        current_return_type: None,
         is_root: ctx.is_root,
     };
     crate::expr::emit(out, value, &nested);
@@ -137,6 +138,7 @@ fn emit_const(
         reassigned: ctx.reassigned,
         types: ctx.types,
         current_let_type: ty,
+        current_return_type: None,
         is_root: ctx.is_root,
     };
     crate::expr::emit(out, value, &nested);
@@ -195,7 +197,17 @@ fn emit_return(
     out.push_str("return");
     if let Some(e) = expr {
         out.push(' ');
-        crate::expr::emit(out, e, ctx);
+        // For `return { ... };` inside a function whose declared return
+        // type is an inline object, propagate that type as the expected
+        // shape so the ObjectLiteral can be resolved against it.
+        let nested = Ctx {
+            reassigned: ctx.reassigned,
+            types: ctx.types,
+            current_let_type: ctx.current_return_type,
+            current_return_type: None,
+            is_root: ctx.is_root,
+        };
+        crate::expr::emit(out, e, &nested);
     }
     out.push_str(";\n");
 }

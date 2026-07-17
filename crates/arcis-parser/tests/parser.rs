@@ -45,6 +45,28 @@ fn parses_if_else() {
 }
 
 #[test]
+fn parses_else_if_chain() {
+    let src = "if (x == 1) { a; } else if (x == 2) { b; } else if (x == 3) { c; } else { d; }";
+    let stmts = parse(src);
+    // Walk down the chain: the outer If must have an else_branch that
+    // itself is an `If` (i.e. the `else if` was parsed as a nested If).
+    match &stmts[0] {
+        Stmt::If { else_branch, .. } => {
+            let else_branch = else_branch.as_ref().expect("first else");
+            assert_eq!(else_branch.len(), 1);
+            assert!(matches!(else_branch[0], Stmt::If { .. }));
+            // The inner If must have its own else_branch.
+            if let Stmt::If { else_branch: inner, .. } = &else_branch[0] {
+                assert!(inner.is_some(), "second else must exist");
+            } else {
+                panic!("expected nested If");
+            }
+        }
+        _ => panic!("expected Stmt::If"),
+    }
+}
+
+#[test]
 fn parses_for_of_loop() {
     let src = "for (let v of arr) { print(v); }";
     let stmts = parse(src);

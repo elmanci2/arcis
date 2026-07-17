@@ -109,9 +109,11 @@ fn flags_cyclic_dependencies() {
 }
 
 #[test]
-fn rejects_invalid_module_name() {
+fn sanitises_invalid_module_names() {
     let tmp = TempDir::new();
-    // Hyphens are not valid Rust identifiers → linker rejects the name.
+    // Hyphens and leading digits are not valid Rust identifiers; the
+    // linker sanitises them so users can name their files however they
+    // like. `my-utils` becomes `my_utils` internally.
     fs::write(
         tmp.path().join("my-utils.tsr"),
         "export const X = 1;\n",
@@ -123,6 +125,10 @@ fn rejects_invalid_module_name() {
     )
     .expect("write main.tsr");
 
-    let result = resolve(tmp.path());
-    assert!(result.is_err(), "hyphenated module names must be rejected");
+    let modules = resolve(tmp.path()).expect("hyphenated names must be sanitised");
+    let utils_mod = modules
+        .iter()
+        .find(|m| m.path.file_name().is_some_and(|f| f == "my-utils.tsr"))
+        .expect("utils module loaded");
+    assert_eq!(utils_mod.id, "my_utils");
 }

@@ -34,6 +34,7 @@ pub(crate) fn generate(
         reassigned: &reassigned,
         types: &types,
         current_let_type: None,
+        current_return_type: None,
         is_root,
     };
 
@@ -222,6 +223,7 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
         reassigned: ctx.reassigned,
         types: ctx.types,
         current_let_type: ty.as_ref(),
+        current_return_type: None,
         is_root: ctx.is_root,
     };
     crate::expr::emit(out, value, &nested);

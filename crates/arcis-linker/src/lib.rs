@@ -177,26 +177,55 @@ pub fn resolve_specifier(importer: &Path, spec: &str) -> Result<ModuleTarget, St
     }
 }
 
-/// Return the id of a module (= file stem), validated as a valid Rust
-/// identifier: `[A-Za-z_][A-Za-z0-9_]*`.
+/// Return the Rust-compatible id of a module, derived from the file stem.
+///
+/// The id is what ends up as `mod <id>;` and the generated `<id>.rs` file
+/// name, so it must be a valid Rust identifier. If the file stem starts
+/// with a digit (e.g. `01_hello`) or contains a hyphen (e.g. `my-utils`),
+/// we prepend `_` until the first character is alphabetic or `_`, then
+/// replace any other invalid character with `_`. The file itself is
+/// untouched — only the id used inside the generated Rust code is
+/// sanitised.
 fn module_id(path: &Path) -> Result<String, String> {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| format!("invalid file name: {}", path.display()))?;
-    let valid_start = stem
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphabetic() || c == '_')
-        .unwrap_or(false);
-    let valid_rest = stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if !(valid_start && valid_rest) {
-        return Err(format!(
-            "invalid module name `{}`: must be an identifier (letters, digits, or `_`; must not start with a digit and may not contain hyphens)",
-            stem
-        ));
+    Ok(sanitize_module_id(stem))
+}
+
+/// Sanitise a string so it is a valid Rust identifier
+/// `[A-Za-z_][A-Za-z0-9_]*`. Prepends `_` until the first character is
+/// valid, then replaces any invalid character with `_`.
+fn sanitize_module_id(stem: &str) -> String {
+    if stem.is_empty() {
+        return "_".into();
     }
-    Ok(stem.to_string())
+    let mut out = String::with_capacity(stem.len());
+    let mut first = true;
+    for c in stem.chars() {
+        let valid = if first {
+            c.is_ascii_alphabetic() || c == '_'
+        } else {
+            c.is_ascii_alphanumeric() || c == '_'
+        };
+        if valid {
+            out.push(c);
+        } else if first {
+            out.push('_');
+            // Re-evaluate this char in the non-first position so e.g. a
+            // digit that follows gets the normal treatment.
+            if c.is_ascii_alphanumeric() {
+                out.push(c);
+            } else {
+                out.push('_');
+            }
+        } else {
+            out.push('_');
+        }
+        first = false;
+    }
+    out
 }
 
 /// Verify that no two modules share the same id (which would clash in
@@ -319,8 +348,14 @@ mod tests {
     }
 
     #[test]
-    fn module_id_rejects_invalid() {
-        assert!(module_id(Path::new("/tmp/my-mod.tsr")).is_err());
-        assert!(module_id(Path::new("/tmp/2starts.tsr")).is_err());
+    fn module_id_sanitises_invalid() {
+        // Hyphens are replaced by underscores; the function never errors.
+        assert_eq!(module_id(Path::new("/tmp/my-mod.tsr")).unwrap(), "my_mod");
+        assert_eq!(module_id(Path::new("/tmp/2starts.tsr")).unwrap(), "_2starts");
+        // Hyphens mixed with digits and underscores.
+        assert_eq!(
+            module_id(Path::new("/tmp/01-hello_world.tsr")).unwrap(),
+            "_01_hello_world"
+        );
     }
 }

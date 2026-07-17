@@ -1,0 +1,7 @@
+// 01_hello.tsr — minimal "Hello, World!"
+//
+// The smallest possible Arcis program. Run with:
+//
+//   arcis run examples/01_hello.tsr
+
+print("Hello, World!");

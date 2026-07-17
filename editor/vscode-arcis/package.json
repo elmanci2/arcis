@@ -1,0 +1,34 @@
+{
+  "name": "arcis",
+  "displayName": "Arcis",
+  "description": "Sintaxis para archivos .tsr (clon de TypeScript compilado a Rust)",
+  "version": "0.2.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": ["Programming Languages"],
+  "keywords": ["arcis", "typescript", "tsr", "language"],
+  "scripts": {
+    "package": "vsce package",
+    "install:local": "vsce package && code --install-extension arcis-0.2.0.vsix",
+    "install:dev": "rm -rf ~/.vscode/extensions/arcis-0.2.0 && cp -r . ~/.vscode/extensions/arcis-0.2.0"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "arcis",
+        "aliases": ["Arcis", "arcis"],
+        "extensions": [".tsr"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "arcis",
+        "scopeName": "source.arcis",
+        "path": "./syntaxes/arcis.tmLanguage.json"
+      }
+    ]
+  }
+}

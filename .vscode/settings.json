@@ -1,0 +1,46 @@
+{
+  "files.associations": {
+    "*.tsr": "arcis"
+  },
+  "editor.tokenColorCustomizations": {
+    "textMateRules": [
+      {
+        "scope": "keyword.control.import.arcis",
+        "settings": {
+          "foreground": "#c586c0",
+          "fontStyle": "italic"
+        }
+      },
+      {
+        "scope": "keyword.control.arcis",
+        "settings": {
+          "foreground": "#569cd6"
+        }
+      },
+      {
+        "scope": "storage.type.arcis",
+        "settings": {
+          "foreground": "#4ec9b0"
+        }
+      },
+      {
+        "scope": "entity.name.function.arcis",
+        "settings": {
+          "foreground": "#dcdcaa"
+        }
+      },
+      {
+        "scope": "constant.language.boolean.arcis",
+        "settings": {
+          "foreground": "#569cd6"
+        }
+      },
+      {
+        "scope": "constant.numeric.arcis",
+        "settings": {
+          "foreground": "#b5cea8"
+        }
+      }
+    ]
+  }
+}

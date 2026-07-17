@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "arcis: run",
+      "type": "shell",
+      "command": "cargo run --quiet -- run ${file}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "arcis: check",
+      "type": "shell",
+      "command": "cargo run --quiet -- check ${file}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "arcis: build",
+      "type": "shell",
+      "command": "cargo run --quiet -- build ${file}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "arcis: run multi (examples/mods)",
+      "type": "shell",
+      "command": "cargo run --quiet -- run examples/mods",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

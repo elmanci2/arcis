@@ -1,0 +1,14 @@
+[package]
+name = "arcis-std"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis standard library: built-in .tsr files shipped with the compiler."
+publish = false
+
+# This crate is intentionally source-only: it carries the `.tsr` files of
+# the standard library but does not compile any Rust code. The driver
+# embeds them via `include_str!`.
+include = ["**/*.tsr", "**/*.md", "Cargo.toml"]  # exclude nothing for now

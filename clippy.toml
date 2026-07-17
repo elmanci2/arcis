@@ -1,0 +1,5 @@
+# Minimum supported Rust version. Clips that require newer features are flagged.
+msrv = "1.75"
+
+# Treat every warning as a hard error in CI; this keeps the bar high.
+avoid-breaking-exported-api = false

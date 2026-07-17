@@ -1,0 +1,16 @@
+[package]
+name = "arcis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis CLI: build, run, check, init for .tsr projects."
+
+[[bin]]
+name = "arcis"
+path = "src/main.rs"
+
+[dependencies]
+arcis-driver = { workspace = true }
+clap = { workspace = true }

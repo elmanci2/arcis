@@ -1,0 +1,17 @@
+[package]
+name = "arcis-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis code generator: AST → Rust source."
+
+[dependencies]
+arcis-ast = { workspace = true }
+arcis-linker = { workspace = true }
+
+[dev-dependencies]
+# Needed by `tests/codegen.rs`: lex + parse a snippet, then generate Rust.
+arcis-lexer = { workspace = true }
+arcis-parser = { workspace = true }

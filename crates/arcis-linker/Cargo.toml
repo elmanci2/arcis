@@ -1,0 +1,13 @@
+[package]
+name = "arcis-linker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis module linker: DFS module resolution, import/export validation."
+
+[dependencies]
+arcis-ast = { workspace = true }
+arcis-lexer = { workspace = true }
+arcis-parser = { workspace = true }

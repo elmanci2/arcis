@@ -1,0 +1,10 @@
+[package]
+name = "arcis-lexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis lexer: source text → token stream."
+
+[dependencies]   # the lexer has no upstream dependencies in the current design

@@ -1,0 +1,12 @@
+[package]
+name = "arcis-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis parser: token stream → AST."
+
+[dependencies]
+arcis-ast = { workspace = true }
+arcis-lexer = { workspace = true }

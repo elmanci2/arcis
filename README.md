@@ -1,165 +1,188 @@
 # Arcis
 
-Un clon mínimo de **TypeScript** (`.tsr`) escrito en Rust que **compila a binario nativo**.
+A minimal **TypeScript-like** language (`.tsr`) written in Rust that compiles to
+**native binaries** by transpiling to Rust and delegating the final step to
+`rustc` (or `cargo`, when external crates are involved).
 
-La idea: la sintaxis del lenguaje es idéntica a TS — mismas palabras clave, misma forma de declarar variables, funciones, etc. La diferencia es que en vez de ejecutarse vía Node/Deno, los archivos `.tsr` se transpilan a Rust y se compilan con `rustc` para producir un binario.
+The syntax is identical to TypeScript — same keywords, same `let`/`const`,
+same `function` declarations. The difference is that `.tsr` files do not run
+through Node or Deno; they are translated to Rust and compiled to a single
+binary you can ship.
 
-## Uso rápido
+## Quick start
 
 ```bash
-# Compilar un .tsr y dejar el binario en ./bin/
+# Build a .tsr file and leave the binary in ./bin/
 cargo run -- build examples/hola.tsr
 ./bin/hola
 
-# Compilar y ejecutar directo
+# Build and run directly
 cargo run -- run examples/hola.tsr
 
-# Solo ver el código Rust generado (sin invocar rustc)
+# Just see the generated Rust code (without invoking rustc)
 cargo run -- check examples/hola.tsr
 
-# Proyecto multi-archivo: por convención, el punto de entrada es `main.tsr`
-# (sin argumento usa `./main.tsr`; con un directorio, busca `<dir>/main.tsr`)
+# Multi-file projects: by convention the entry point is `main.tsr`
+# (no argument uses `./main.tsr`; a directory searches `<dir>/main.tsr`)
 cargo run -- run
 cargo run -- run examples/mods
 ```
 
-Una vez instalado (ver abajo), todo esto se invoca como `arcis` directamente:
+Once installed (see below), you can invoke all of this as `arcis` directly:
 
 ```bash
 arcis run examples/mods
-arcis run                   # usa ./main.tsr
-arcis init mi-proyecto      # crea un proyecto nuevo en ./mi-proyecto
+arcis run                   # uses ./main.tsr
+arcis init my-project       # scaffolds a new project in ./my-project
 ```
 
-## Inicio rápido: crear un proyecto nuevo
+## Create a new project from scratch
 
 ```bash
-arcis init mi-proyecto
-cd mi-proyecto
+arcis init my-project
+cd my-project
 arcis run
 ```
 
-`arcis init [<dir>]` crea un `main.tsr` mínimo con un "Hola" listo para
-ejecutar. Sin argumento usa el directorio actual. Si ya existe un `main.tsr`
-aborta sin sobreescribir.
+`arcis init [<dir>]` creates a minimal `main.tsr` with a "Hello" ready to run.
+Without arguments it uses the current directory. If a `main.tsr` already exists
+it aborts without overwriting.
 
-## Instalación como comando del sistema
+## Install as a system command
 
 ```bash
-cargo install --path .        # deja el binario en ~/.cargo/bin/arcis
-which arcis                   # confirmar que está en el PATH
+cargo install --path .        # installs the binary to ~/.cargo/bin/arcis
+which arcis                   # confirm it is on the PATH
 ```
 
-Tras eso podés usar `arcis run`, `arcis build`, `arcis check` desde cualquier
-directorio, sin tener que estar en el repo.
+After that you can run `arcis run`, `arcis build`, `arcis check` from any
+directory, without having to be inside the repo.
 
 ```bash
-# Ejemplo en un directorio cualquiera:
-mkdir mi-app && cd mi-app
-# … escribir main.tsr y módulos …
+# Example in an arbitrary directory:
+mkdir my-app && cd my-app
+# … write main.tsr and modules …
 arcis run
 ```
 
-Para desinstalar: `cargo uninstall arcis` o `rm ~/.cargo/bin/arcis`.
-Para actualizar tras cambios: `cargo install --path . --force`.
+To uninstall: `cargo uninstall arcis` or `rm ~/.cargo/bin/arcis`.
+To update after changes: `cargo install --path . --force`.
 
-## Subset soportado
+## Supported subset
 
-- `let` / `const` con anotación de tipo opcional
-- Tipos primitivos: `string`, `number`, `boolean`, `void`
-- `function nombre(p: T, ...): T { ... }` con `return`
+- `let` / `const` with optional type annotation
+- Primitive types: `string`, `number`, `boolean`, `void`
+- `function name(p: T, ...): T { ... }` with `return`
 - `if (cond) { ... } else { ... }`, `while`, `for`, `for (let x of arr)`, `break`, `continue`
-- `print(expr);` (atajo a `println!`)
-- Literales: `"string"`, `42`, `3.14`, `true`, `false`, `[...]`, `{ clave: valor }`
-- Tipos objeto inline: `let p: { nombre: string, edad: number } = ...`
-- Reasignación (`x = ...`), asignación indexada (`arr[i] = ...`) y de campo (`obj.x = ...`)
-- Operadores: `+ - * / % == != < > <= >= && || !`
-- Comentarios `//` y `/* ... */`
-- **Módulos**: `import`/`export` con sintaxis TypeScript (ver [Módulos](#módulos))
+- `print(expr);` (shorthand for `println!`)
+- Literals: `"string"`, `42`, `3.14`, `true`, `false`, `[...]`, `{ key: value }`
+- Inline object types: `let p: { name: string, age: number } = ...`
+- Reassignment (`x = ...`), indexed assignment (`arr[i] = ...`), field assignment (`obj.x = ...`)
+- Operators: `+ - * / % == != < > <= >= && || !`
+- Comments `//` and `/* ... */`
+- **Modules**: `import`/`export` with TypeScript syntax (see [Modules](#modules))
 
-## Ejemplo
+## Example
 
 `examples/hola.tsr`:
 
 ```ts
-let nombre: string = "Mundo";
-let anio: number = 2026;
+let name: string = "World";
+let year: number = 2026;
 
-function saludar(quien: string, edad: number): string {
-    return "Hola " + quien + " en el año " + edad;
+function greet(who: string, age: number): string {
+    return "Hello " + who + " in the year " + age;
 }
 
-let mensaje: string = saludar(nombre, anio);
-print(mensaje);
+let message: string = greet(name, year);
+print(message);
 
-if (anio > 2000) {
-    print("Bienvenido al siglo XXI");
+if (year > 2000) {
+    print("Welcome to the 21st century");
 } else {
-    print("Viajero del tiempo");
+    print("Time traveller");
 }
 ```
 
-Salida:
+Output:
 
 ```
-Hola Mundo en el año 2026
-Bienvenido al siglo XXI
+Hello World in the year 2026
+Welcome to the 21st century
 ```
 
-## Módulos
+## Modules
 
-Por convención el punto de entrada es **`main.tsr`**. Sin argumentos, `arcis run` usa `./main.tsr`; pasando un directorio busca `<dir>/main.tsr`. Se respeta la sintaxis de TypeScript para `import`/`export`:
+By convention the entry point is **`main.tsr`**. Without arguments, `arcis run`
+uses `./main.tsr`; passing a directory searches `<dir>/main.tsr`. Standard
+TypeScript syntax for `import`/`export` is supported:
 
 ```ts
 // utils.tsr
 export const PI: number = 3.14;
-export function sumar(a: number, b: number): number { return a + b; }
-export default function calcula(n: number): number { return n * PI; }
+export function add(a: number, b: number): number { return a + b; }
+export default function compute(n: number): number { return n * PI; }
 ```
 
 ```ts
-// main.tsr (punto de entrada)
-import { sumar, PI } from "mate";              // import nombrado
-import { sumar as s } from "mate";             // con alias
-import calcula from "mate";                    // import por defecto
-import calcula, { PI } from "mate";            // default + nombrados
-export function f() { ... }                    // export inline
-export const X = 1;                            // export const (valor const)
-export { f, X as Y };                          // re-export (con alias)
-export default function () { ... }             // export por defecto
+// main.tsr (entry point)
+import { add, PI } from "utils";                  // named imports
+import { add as a } from "utils";                 // with alias
+import compute from "utils";                      // default import
+import compute, { PI } from "utils";              // default + named
+export function f() { ... }                       // inline export
+export const X = 1;                               // export const (const value)
+export { f, X as Y };                             // re-export (with alias)
+export default function () { ... }                // default export
 ```
 
-Las rutas de import son relativas al directorio del archivo que importa (sin prefijo `./`): `from "mate"` resuelve a `<dir>/mate.tsr`. Internamente cada `.tsr` se transpila a un `.rs` separado y `main.rs` los declara con `mod <id>;`, referenciando items vía `use crate::<id>::...;`. Esto se traduce a módulos Rust reales (`pub fn`, `pub const`, `pub use self::...`), así que la visibilidad y los nombres deben ser identificadores Rust válidos (sin guiones, sin empezar por dígito).
+Import paths are resolved relative to the directory of the importing file
+(without the `./` prefix): `from "utils"` resolves to `<dir>/utils.tsr`.
+Internally each `.tsr` is transpiled to a separate `.rs`, and `main.rs` declares
+them with `mod <id>;`, referencing items via `use crate::<id>::...;`. This
+translates to real Rust modules (`pub fn`, `pub const`, `pub use self::...`),
+so visibility and names must be valid Rust identifiers (no hyphens, must not
+start with a digit).
 
-Ejemplo completo: `examples/mods/`.
+Full example: `examples/mods/`.
 
-### Limitaciones de los módulos
+### Module limitations
 
-- **Top-level `let`/`const` en módulos que no son `main`** se emiten como `const` de Rust, así que el valor debe ser evaluable en tiempo de compilación. Para `export const X = funcion() {...}` con funciones no-const-eval, rustc se quejará con un error claro.
-- **Nombres de módulo**: deben ser identificadores Rust válidos (el stem del archivo: `[A-Za-z_][A-Za-z0-9_]*`). `from "my-mod"` falla con un error de linkado.
-- **Tipos objeto** (`{ a: T, ... }`) se centralizan en `main.rs` como `pub struct`, y los módulos no-`main` los referencian como `crate::__ObjNAME`. Esto evita duplicados entre módulos.
-- **`export { privada as publica }`** sobre un item privado no se puede re-exportar (Rust exige que el item original sea público). Para preservar encapsulamiento en este caso habría que emitir un wrapper; por ahora el item original debe ser público.
-- **No** se soporta `import * as ns` (namespace) en este paso.
+- **Top-level `let`/`const` in non-`main` modules** are emitted as Rust `const`,
+  so the value must be evaluable at compile time. For
+  `export const X = function() {...}` with non-const-eval functions, rustc
+  will fail with a clear error.
+- **Module names**: must be valid Rust identifiers (the file stem:
+  `[A-Za-z_][A-Za-z0-9_]*`). `from "my-mod"` will fail with a link error.
+- **Object types** (`{ a: T, ... }`) are centralized in `main.rs` as
+  `pub struct`, and non-`main` modules reference them as
+  `crate::__ObjNAME`. This avoids duplication between modules.
+- **`export { private as public }`** on a private item cannot be re-exported
+  (Rust requires the original item to be public). To preserve encapsulation
+  in this case a wrapper would have to be emitted; for now the original item
+  must be public.
+- `import * as ns` (namespace) is **not** supported in this step.
 
-## Fuera de alcance (por ahora)
+## Out of scope (for now)
 
-- Clases / interfaces
+- Classes / interfaces
 - `import * as ns` (namespace import)
+- Async / await
 
-## Cómo funciona
+## How it works
 
 ```
 main.tsr (+ utils.tsr, ...)
    │
-   ▼ linker (DFS, valida exports/imports, ciclos)
+   ▼ linker (DFS, validates exports/imports, cycles)
 ┌─────────┐  tokens   ┌────────┐   AST    ┌────────────────┐  bin/*.rs
-│  Lexer  │ ────────▶ │ Parser │ ───────▶ │ Codegen (xN)   │ ───────▶ rustc → binario
+│  Lexer  │ ────────▶ │ Parser │ ───────▶ │ Codegen (xN)   │ ───────▶ rustc → binary
 └─────────┘           └────────┘          └────────────────┘
                                               │
                                               └─ main.rs: mod …; use crate::…;
 ```
 
-El codegen emite código Rust usando:
+The codegen emits Rust source using:
 
 | TS       | Rust        |
 |----------|-------------|
@@ -168,18 +191,43 @@ El codegen emite código Rust usando:
 | `boolean`| `bool`      |
 | `void`   | `()`        |
 
-La concatenación con `+` se traduce a `format!("{}{}", a, b)` cuando alguno de los operandos es un literal string; en otro caso usa `+` directo. Esto cubre `print("Hola " + edad)` sin runtime adicional.
+String concatenation with `+` is translated to `format!("{}{}", a, b)` when at
+least one of the operands is a string literal; otherwise plain `+` is used. This
+covers `print("Hello " + age)` without any extra runtime.
 
-## Limitaciones conocidas
+## Project layout (workspace)
 
-- El tipado es **estático en el parser pero no se verifica**: si escribes `let x: number = "hola";`, el código se genera igual y `rustc` se quejará. Está bien para una primera prueba.
-- No hay reasignación: `let x = 1; x = 2;` no compilará porque nuestro parser no soporta la sentencia de asignación.
-- `const` se emite como `let` con nombre en MAYÚSCULAS (Rust exige valores en tiempo de compilación para `const`, lo cual limita casos de uso).
+Arcis is organized as a Cargo workspace with one crate per compilation phase
+(mirroring how `rustc`, `swc`, and `biome` are structured):
 
-## Próximos pasos (ideas)
+```
+crates/
+├── arcis-ast/         # AST data types only (no dependencies)
+├── arcis-lexer/       # source text → token stream
+├── arcis-parser/      # token stream → AST
+├── arcis-validation/  # semantic checks (unused, duplicate, loop context)
+├── arcis-linker/      # module resolver + import/export validation
+├── arcis-codegen/     # AST → Rust source
+├── arcis-driver/      # orchestration: build, compile, run, init
+├── arcis/             # CLI binary (clap)
+└── arcis-std/         # standard library (.tsr files)
+```
 
-- Reasignación (`x = expr;`)
-- Bucles `while`
-- Arrays / strings indexados
-- Inferencia de tipos básica
-- Tests unitarios por fase (lex, parse, codegen)
+See [`docs/architecture.md`](docs/architecture.md) for the full dependency
+graph and pipeline diagram.
+
+## Known limitations
+
+- Typing is **static in the parser but not verified**: writing `let x: number = "hi";`
+  generates the same code and `rustc` will complain. That is acceptable for a
+  first iteration.
+- The codegen follows TS semantics but does not implement shadowing, closures,
+  or first-class functions yet.
+
+## Next steps (ideas)
+
+- Type checker (currently relies on `rustc` for type errors)
+- Standard library (`arcis-std` is scaffolded but not yet wired into the driver)
+- Language server (LSP) and formatter
+- Splitting the larger `parser.rs` and `codegen.rs` into per-AST-node files
+- Translating remaining Spanish error messages and internal comments to English

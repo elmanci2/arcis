@@ -1,0 +1,16 @@
+// arrays.tsr — array utilities for the standard library.
+
+export function sum(values: number[]): number {
+    let total: number = 0;
+    for (let v of values) {
+        total = total + v;
+    }
+    return total;
+}
+
+export function average(values: number[]): number {
+    if (values.length === 0) {
+        return 0;
+    }
+    return sum(values) / values.length;
+}

@@ -1,0 +1,13 @@
+// strings.tsr — string utilities for the standard library.
+
+export function trim(s: string): string {
+    return s.trim();
+}
+
+export function upper(s: string): string {
+    return s.toUpperCase();
+}
+
+export function lower(s: string): string {
+    return s.toLowerCase();
+}

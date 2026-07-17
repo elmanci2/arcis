@@ -1,8 +1,47 @@
-[package]
-name = "arcis"
+[workspace]
+resolver = "2"
+members = [
+    "crates/arcis",
+    "crates/arcis-ast",
+    "crates/arcis-codegen",
+    "crates/arcis-driver",
+    "crates/arcis-lexer",
+    "crates/arcis-linker",
+    "crates/arcis-parser",
+    "crates/arcis-std",
+    "crates/arcis-validation",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/elmanci2/arcis"
 
-[dependencies]
+[workspace.dependencies]
+# Workspace-internal crates — every member uses these by short name.
+arcis = { path = "crates/arcis" }
+arcis-ast = { path = "crates/arcis-ast" }
+arcis-codegen = { path = "crates/arcis-codegen" }
+arcis-driver = { path = "crates/arcis-driver" }
+arcis-lexer = { path = "crates/arcis-lexer" }
+arcis-linker = { path = "crates/arcis-linker" }
+arcis-parser = { path = "crates/arcis-parser" }
+arcis-std = { path = "crates/arcis-std" }
+arcis-validation = { path = "crates/arcis-validation" }
+
+# Third-party deps kept aligned across the workspace.
 clap = { version = "4.5", features = ["derive"] }
 tempfile = "3.13"
+
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

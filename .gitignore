@@ -1,2 +1,36 @@
-/target
-/bin/
+# Build artifacts
+target/
+
+# Generated Rust source files (.tsr → .rs intermediates) and compiled binaries
+# produced by `arcis build`. We keep the `bin/` directory in the repo layout,
+# but its *contents* are build output and must not be tracked.
+bin/*.rs
+bin/main
+bin/baseline
+bin/input
+bin/api-clima-2/
+bin/mi-api/
+bin/testLeguaje/
+bin/*.exe
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project-local scratch files
+*.tmp
+*.bak
+
+# Local override of Cargo config (cargo reads .cargo/config.toml)
+.cargo/
+
+# Stray lock files
+.gix
+*.gix

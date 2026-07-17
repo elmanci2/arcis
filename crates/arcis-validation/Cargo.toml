@@ -1,0 +1,11 @@
+[package]
+name = "arcis-validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis semantic checks: unused declarations, duplicates, break/continue context."
+
+[dependencies]
+arcis-ast = { workspace = true }

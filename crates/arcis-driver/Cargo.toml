@@ -1,0 +1,14 @@
+[package]
+name = "arcis-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis driver: orchestrates the compilation pipeline, invokes rustc or cargo."
+
+[dependencies]
+arcis-ast = { workspace = true }
+arcis-codegen = { workspace = true }
+arcis-linker = { workspace = true }
+arcis-validation = { workspace = true }

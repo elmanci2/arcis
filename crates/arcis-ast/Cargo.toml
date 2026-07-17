@@ -1,0 +1,10 @@
+[package]
+name = "arcis-ast"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis AST data types (programs, statements, expressions, types)."
+
+[dependencies]   # intentionally empty — AST has no upstream dependencies

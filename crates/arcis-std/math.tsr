@@ -1,0 +1,4 @@
+// math.tsr — common mathematical constants.
+
+export const PI: number = 3.141592653589793;
+export const E: number = 2.718281828459045;

@@ -1,0 +1,280 @@
+// 06_sys/sys.tsr — `sys.*` API end-to-end demo.
+//
+// Demonstrates every builtin in the `sys` namespace, organised by
+// the codegen submodule that implements it:
+//
+//   Top-level `sys.X(args)`:
+//     - sys.fs      — filesystem operations
+//     - sys.path    — path queries and transformations
+//     - sys.env     (top-level) — process environment queries
+//     - sys.process — child-process management
+//
+//   Sub-namespace `sys.<ns>.<method>(args)`:
+//     - sys.env     — environment variables (distinct from above)
+//     - sys.os      — operating-system info
+//     - sys.memory  — RAM info
+//     - sys.cpu     — CPU info
+//     - sys.gpu     — GPU info
+//     - sys.disk    — filesystem space
+//     - sys.net     — network info
+//
+// The script runs every builtin in turn and prints the result. It
+// creates a temporary working directory under `sys.tempDir()`, runs
+// all filesystem / filesystem-aware demos against it, and cleans up
+// before exiting. Network-dependent builtins (publicIp, online) just
+// print whatever the network returns — if you are offline they will
+// show empty/false without aborting.
+//
+// Run with:
+//   arcis run examples/06-sys/sys.tsr
+
+// ============================================================
+// Setup
+// ============================================================
+
+let demoDir: string = sys.tempDir() + "/arcis_sys_demo";
+// Make sure the demo dir is empty even on re-runs.
+if (sys.exists(demoDir)) {
+    sys.deleteDirAll(demoDir);
+}
+sys.mkdir(demoDir);
+
+print("working directory: " + demoDir);
+print("");
+
+// ============================================================
+// 1. sys.fs — filesystem operations
+// ============================================================
+
+print("=== sys.fs ===");
+
+let notesPath: string = demoDir + "/notes.txt";
+let bakPath: string = demoDir + "/notes.txt.bak";
+
+// writeFile + readFile + appendFile + fileSize
+sys.writeFile(notesPath, "line 1\n");
+sys.appendFile(notesPath, "line 2\n");
+print("writeFile + appendFile + readFile: " + sys.readFile(notesPath).trim());
+print("fileSize: " + sys.fileSize(notesPath) + " bytes");
+
+// listDir
+let entries: string[] = sys.listDir(demoDir);
+print("listDir count: " + entries.length);
+
+// createFile + deleteFile
+let touchedPath: string = demoDir + "/touched.txt";
+sys.createFile(touchedPath);
+print("createFile exists? " + sys.exists(touchedPath));
+sys.deleteFile(touchedPath);
+print("deleteFile exists? " + sys.exists(touchedPath));
+
+// mkdir + deleteDir + deleteDirAll
+let subDir: string = demoDir + "/sub";
+sys.mkdir(subDir);
+print("mkdir exists? " + sys.exists(subDir));
+sys.deleteDir(subDir);
+print("deleteDir exists? " + sys.exists(subDir));
+
+// copy + move + rename
+sys.copy(notesPath, bakPath);
+print("copy exists? " + sys.exists(bakPath));
+let movedPath: string = demoDir + "/notes.moved";
+sys.move(notesPath, movedPath);
+print("move: original gone? " + !sys.exists(notesPath));
+print("move: target exists? " + sys.exists(movedPath));
+sys.rename(movedPath, demoDir + "/notes.renamed");
+print("rename: target exists? " + sys.exists(demoDir + "/notes.renamed"));
+
+// readBytes / writeBytes round-trip — Arcis doesn't expose byte
+// literals today, so we can only round-trip through the system;
+// the following comment is here for documentation. A future
+// version with `bytes` literals can do:
+//     let b = sys.readBytes(bakPath);
+//     sys.writeBytes(bakPath, b);
+
+// ============================================================
+// 2. sys.path — path queries and transformations
+// ============================================================
+
+print("");
+print("=== sys.path ===");
+
+let samplePath: string = demoDir + "/notes.renamed";
+print("exists:  " + sys.exists(samplePath));
+print("isFile:  " + sys.isFile(samplePath));
+print("isDir:   " + sys.isDir(demoDir));
+print("fileSize: " + sys.fileSize(samplePath) + " bytes");
+print("fileInfo: " + sys.fileInfo(samplePath));
+print("absolute: " + sys.absolute(samplePath));
+print("relative: " + sys.relative(sys.absolute(samplePath)));
+
+// createSymlink + readLink
+let linkPath: string = demoDir + "/notes.link";
+sys.createSymlink(samplePath, linkPath);
+print("symlink exists? " + sys.exists(linkPath));
+print("symlink target: " + sys.readLink(linkPath));
+
+// ============================================================
+// 3. sys.env (top-level) — process-environment queries
+// ============================================================
+
+print("");
+print("=== sys.env (top-level) ===");
+print("currentDir:    " + sys.currentDir());
+print("tempDir:       " + sys.tempDir());
+print("homeDir:       " + sys.homeDir());
+print("executablePath: " + sys.executablePath());
+
+// changeDir + back (illustrative)
+let originalDir: string = sys.currentDir();
+sys.changeDir(demoDir);
+print("changeDir demo: " + sys.currentDir());
+sys.changeDir(originalDir);
+
+// ============================================================
+// 4. sys.process — child-process management
+// ============================================================
+
+print("");
+print("=== sys.process ===");
+
+// process(cmd, args) — captures stdout, stderr, exit code as
+// a built-in ArcisProcess struct.
+let p = sys.process("echo", ["hello from arcis"]);
+print("process.stdout:   [" + p.stdout.trim() + "]");
+print("process.stderr:   [" + p.stderr + "]");
+print("process.exitCode: " + p.exitCode);
+
+// exec — same as process but returns stdout as a string.
+let uname: string = sys.exec("uname", ["-s"]);
+print("exec(uname -s): " + uname.trim());
+
+// spawn + kill — short-lived child.
+let pid: number = sys.spawn("sh", ["-c", "sleep 5"]);
+print("spawned pid: " + pid);
+sys.kill(pid);
+print("killed pid:  " + pid);
+
+// currentPid + parentPid + processes
+print("currentPid: " + sys.currentPid());
+print("parentPid:  " + sys.parentPid());
+let procs: string[] = sys.processes();
+print("process count: " + procs.length);
+if (procs.length > 0) {
+    print("first proc: " + procs[0]);
+}
+
+print("");
+print("=== sys.env (env vars) ===");
+
+// sys.env.get / set / delete / all
+print("HOME (existing): " + sys.env.get("HOME"));
+sys.env.set("ARCIS_DEMO", "yes");
+print("ARCIS_DEMO (just set): " + sys.env.get("ARCIS_DEMO"));
+let allVars: string[] = sys.env.all();
+print("env var count: " + allVars.length);
+sys.env.delete("ARCIS_DEMO");
+print("ARCIS_DEMO (after delete): [" + sys.env.get("ARCIS_DEMO") + "]");
+
+// ============================================================
+// 5. sys.os — operating-system info
+// ============================================================
+
+print("");
+print("=== sys.os ===");
+print("name:     " + sys.os.name());
+print("version:  " + sys.os.version().trim());
+print("arch:     " + sys.os.arch());
+print("hostname: " + sys.os.hostname());
+print("username: " + sys.os.username());
+print("uptime:   " + sys.os.uptime() + " s");
+print("locale:   " + sys.os.locale());
+print("cpuCount: " + sys.os.cpuCount());
+
+// ============================================================
+// 6. sys.memory — RAM info (Linux-first via /proc/meminfo)
+// ============================================================
+
+print("");
+print("=== sys.memory ===");
+print("total:     " + sys.memory.total() + " bytes");
+print("free:      " + sys.memory.free() + " bytes");
+print("used:      " + sys.memory.used() + " bytes");
+print("available: " + sys.memory.available() + " bytes");
+
+// ============================================================
+// 7. sys.cpu — CPU info (Linux-first via /proc/cpuinfo and
+// /proc/stat; cpu.usage samples for 100ms).
+// ============================================================
+
+print("");
+print("=== sys.cpu ===");
+print("model:     " + sys.cpu.model());
+print("brand:     " + sys.cpu.brand());
+print("frequency: " + sys.cpu.frequency() + " MHz");
+print("cores:     " + sys.cpu.cores());
+print("usage:     " + sys.cpu.usage() + " %");
+
+// ============================================================
+// 8. sys.gpu — GPU info (Linux-first via lspci / nvidia-smi)
+// ============================================================
+
+print("");
+print("=== sys.gpu ===");
+let gpus: string[] = sys.gpu.list();
+print("gpu count:  " + gpus.length);
+if (gpus.length > 0) {
+    print("gpu[0]:     " + gpus[0]);
+}
+print("gpu.name:   " + sys.gpu.name());
+print("gpu.vendor: " + sys.gpu.vendor());
+print("gpu.memory: " + sys.gpu.memory() + " bytes");
+
+// ============================================================
+// 9. sys.disk — filesystem space (cross-platform via df)
+// ============================================================
+
+print("");
+print("=== sys.disk ===");
+let disks: string[] = sys.disk.list();
+print("disk count: " + disks.length);
+if (disks.length > 0) {
+    print("disks[0]:   " + disks[0]);
+}
+print("disk.free(/):  " + sys.disk.free("/") + " bytes");
+print("disk.used(/):  " + sys.disk.used("/") + " bytes");
+print("disk.total(/): " + sys.disk.total("/") + " bytes");
+
+// ============================================================
+// 10. sys.net — network info
+// ============================================================
+
+print("");
+print("=== sys.net ===");
+print("hostname: " + sys.net.hostname());
+print("localIp:  " + sys.net.ip());
+let ifs: string[] = sys.net.interfaces();
+print("interfaces count: " + ifs.length);
+if (ifs.length > 0) {
+    print("ifs[0]:   " + ifs[0]);
+}
+print("online:   " + sys.net.online());
+print("publicIp: " + sys.net.publicIp());
+
+// ============================================================
+// Cleanup
+// ============================================================
+
+print("");
+print("=== cleanup ===");
+
+// Delete the symlink, then every file we created, then the dir.
+sys.deleteFile(linkPath);
+sys.deleteFile(bakPath);
+sys.deleteFile(demoDir + "/notes.renamed");
+sys.deleteDir(demoDir);
+print("removed: " + demoDir);
+print("dir exists? " + sys.exists(demoDir));
+
+print("");
+print("done.");

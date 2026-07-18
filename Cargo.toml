@@ -6,6 +6,7 @@ members = [
     "crates/arcis-codegen",
     "crates/arcis-driver",
     "crates/arcis-lexer",
+    "crates/arcis-lsp",
     "crates/arcis-linker",
     "crates/arcis-parser",
     "crates/arcis-std",

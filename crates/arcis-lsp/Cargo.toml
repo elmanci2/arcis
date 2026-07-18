@@ -1,0 +1,28 @@
+[package]
+name = "arcis-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis Language Server: completion, hover and diagnostics for .tsr files."
+publish = false
+
+[dependencies]
+arcis-ast         = { workspace = true }
+arcis-lexer       = { workspace = true }
+arcis-parser      = { workspace = true }
+arcis-validation  = { workspace = true }
+async-lsp         = { version = "0.2", features = ["tokio"] }
+futures           = { version = "0.3" }
+tokio             = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
+tokio-util        = { version = "0.7", features = ["compat"] }
+tower             = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "arcis-lsp"
+path = "src/main.rs"
+
+[lib]
+name = "arcis_lsp"
+path = "src/lib.rs"

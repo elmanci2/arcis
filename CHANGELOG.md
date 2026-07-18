@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chatter doesn't leak into program output). Linux-first; other
   platforms get `""` / `[]` / `false`.
 - 5 new integration tests for `sys.net.*` (73 sys_codegen tests total).
+- New end-to-end example `examples/06-sys/sys.tsr` (with `README.md`)
+  that demonstrates every builtin in the `sys.*` API: filesystem,
+  path, process environment, child-process management, environment
+  variables, OS info, memory, CPU, GPU, disk, and network. The script
+  is self-cleaning (deletes its temp dir on exit) and idempotent
+  (re-running cleans up before recreating).
 - Split `sys` codegen into three submodules under
   `crates/arcis-codegen/src/sys/`: `fs` (file/dir IO), `path` (path
   queries) and `env` (process / environment). Each submodule exposes a

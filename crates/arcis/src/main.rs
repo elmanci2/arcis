@@ -5,6 +5,7 @@
 //!   arcis run   [--backend rust|cranelift] [<file.tsr> | <dir>]  → compile and execute
 //!   arcis check [--backend rust|cranelift] [<file.tsr> | <dir>]  → emit without compiling
 //!   arcis init  [<dir>]                                          → scaffold a new project
+//!   arcis fmt   [--check] [<file.tsr> ...]                       → format .tsr files
 //!
 //! Without an argument the current directory is used, where the driver looks
 //! for `main.tsr` (the entry-point convention). With a directory it looks for
@@ -17,6 +18,7 @@
 //! - `cranelift`: lower directly to Cranelift IR, link with the system `cc`
 //!   against `libc`. **Does not** require a Rust toolchain.
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -67,6 +69,17 @@ enum Commands {
         /// Directory in which to create the project (default `.`).
         dir: Option<PathBuf>,
     },
+    /// Format .tsr files (Prettier-style: 2-space indent, semicolons, normalised
+    /// spacing).  With --check, exit with a non-zero code if any file *differs*
+    /// from the expected formatting — useful for CI.
+    Fmt {
+        /// .tsr files or directories to format.  Directories are walked
+        /// recursively for `**/*.tsr`.
+        files: Vec<PathBuf>,
+        /// Only check — do not write files.  Exit 1 if formatting would differ.
+        #[arg(long, default_value_t = false)]
+        check: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -95,6 +108,7 @@ fn main() -> ExitCode {
             check_only(&resolve_arg(file), backend)
         }
         Commands::Init { dir } => arcis_driver::init(&resolve_arg(dir)),
+        Commands::Fmt { files, check } => cmd_fmt(files, check),
     };
 
     match result {
@@ -123,6 +137,75 @@ fn check_only(input: &std::path::Path, backend: arcis_driver::Backend) -> Result
                 out.sources.len()
             );
             println!("use `arcis build --backend cranelift {}` to produce a binary", input.display());
+        }
+    }
+    Ok(())
+}
+
+/// Walk `paths`, formatting every `.tsr` file found.  Directories are
+/// walked recursively.  If `check` is true, files are *not* modified and
+/// the command exits 1 if any file would differ; otherwise formatted
+/// sources are written back in place.
+fn cmd_fmt(files: Vec<PathBuf>, check: bool) -> Result<(), String> {
+    let mut tsr_files = Vec::new();
+    for p in &files {
+        if p.is_dir() {
+            // Recursively collect .tsr files.
+            collect_tsr_files(p, &mut tsr_files)
+                .map_err(|e| format!("{}: {e}", p.display()))?;
+        } else {
+            tsr_files.push(p.clone());
+        }
+    }
+    // Default: current directory.
+    if tsr_files.is_empty() {
+        collect_tsr_files(&PathBuf::from("."), &mut tsr_files)
+            .map_err(|e| format!(". : {e}"))?;
+    }
+
+    let mut dirty = 0;
+    for path in &tsr_files {
+        let src = fs::read_to_string(path)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        match arcis_fmt::format(&src) {
+            Ok(formatted) => {
+                if formatted == src {
+                    println!("unchanged: {}", path.display());
+                } else if check {
+                    eprintln!("would format: {}", path.display());
+                    dirty += 1;
+                } else {
+                    fs::write(path, formatted)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    println!("formatted:  {}", path.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("{} {}", path.display(), e);
+                dirty += 1;
+            }
+        }
+    }
+
+    if dirty > 0 {
+        Err(format!(
+            "{dirty} file{} {} not formatted",
+            if dirty == 1 { "" } else { "s" },
+            if check { "would be" } else { "could not be" },
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn collect_tsr_files(dir: &PathBuf, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_tsr_files(&path, out)?;
+        } else if path.extension().map(|e| e == "tsr").unwrap_or(false) {
+            out.push(path);
         }
     }
     Ok(())

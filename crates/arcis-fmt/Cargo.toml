@@ -1,0 +1,15 @@
+[package]
+name = "arcis-fmt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis source formatter: normalizes .tsr formatting (Prettier-style)."
+publish = false
+
+[dependencies]
+arcis-lexer = { workspace = true }
+
+[dev-dependencies]
+arcis-parser = { workspace = true }

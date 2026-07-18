@@ -1,14 +1,7 @@
-
-
-function shop(name:string){
-    if(name != "" || name != null){
-        console.log("Hello " + name);
-    }else {
-        console.log("Hello World");
-    }
-}
-
-const name = "John";
-
-shop(name);
+// 01_hello.tsr — minimal "Hello, World!"
+//
+// The smallest possible Arcis program. Run with:
+//
+//   arcis run examples/01_hello.tsr
+print("Hello, World!");
 

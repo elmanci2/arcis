@@ -39,6 +39,7 @@ mod collect;
 mod context;
 mod expr;
 mod function;
+mod method;
 mod module;
 mod rt;
 mod stmt;

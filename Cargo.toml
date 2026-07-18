@@ -6,6 +6,7 @@ members = [
     "crates/arcis-codegen",
     "crates/arcis-codegen-cranelift",
     "crates/arcis-driver",
+    "crates/arcis-fmt",
     "crates/arcis-lexer",
     "crates/arcis-lsp",
     "crates/arcis-linker",
@@ -28,6 +29,7 @@ arcis-ast = { path = "crates/arcis-ast" }
 arcis-codegen = { path = "crates/arcis-codegen" }
 arcis-codegen-cranelift = { path = "crates/arcis-codegen-cranelift" }
 arcis-driver = { path = "crates/arcis-driver" }
+arcis-fmt = { path = "crates/arcis-fmt" }
 arcis-lexer = { path = "crates/arcis-lexer" }
 arcis-linker = { path = "crates/arcis-linker" }
 arcis-parser = { path = "crates/arcis-parser" }

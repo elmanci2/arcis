@@ -21,6 +21,7 @@ use cranelift_object::ObjectModule;
 use crate::context::FunctionCtx;
 use crate::expr;
 use crate::rt::Runtime;
+use crate::types::ArcisType;
 
 /// Emit `print(arg)` and return a placeholder SSA value (Cranelift calls
 /// with no return produce no results; we fabricate an `I8` zero to keep
@@ -56,6 +57,11 @@ pub(crate) fn emit_print(
         }
         crate::types::ArcisType::Void => {
             return Err("cannot print void".to_string());
+        }
+        ArcisType::Array | ArcisType::Object => {
+            // Placeholder handle; in practice Array/Object wouldn't be
+            // printed directly but we avoid a panic.
+            return Err("cannot print array/object directly (use iteration or field access)".to_string());
         }
     };
     let callee = module.declare_func_in_func(runtime.println, builder.func);

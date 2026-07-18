@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Module-level doc-comments at the top of each phase crate translated to English.
 
 ### Added
+- New crate `arcis-fmt`: on-disk `.tsr` source formatter (Prettier-style:
+  2-space indent, semicolons, normalised operator/keyword/punctuation
+  spacing). Idempotent by construction, preserves both `//` and `/* */`
+  comments, and respects original blank lines (capped at 1). The lexer
+  was extended with a backwards-compatible `lex_with_comments` API that
+  captures comment positions without touching the parser.
+- Subcommand `arcis fmt [files] --check` in the `arcis` binary. Walks
+  directories recursively for `.tsr` files. `--check` mode exits non-zero
+  if any file differs from the formatted version — suitable for CI.
+- LSP `textDocument/formatting` handler in `arcis-lsp`: VS Code's
+  `Shift+Alt+F` formats the current document. The capability is
+  advertised as `document_formatting_provider: true`.
+- 17 unit/integration tests for `arcis-fmt` covering round-trip
+  formatting, indentation (if/else/while/for/function), operator
+  spacing, comments preservation, idempotency, and valid-parse
+  guarantee.
+- Documentation: `docs/contributing/formatting.md` explains the
+  token-stream state machine and how to tune formatting rules.
 - New `sys.*` process-management builtins in a new `sys/process.rs`
   submodule: `process(cmd, args)` (returns the built-in `ArcisProcess
   { stdout: String, stderr: String, exitCode: f64 }` struct),

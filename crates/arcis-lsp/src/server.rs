@@ -22,7 +22,7 @@ use async_lsp::lsp_types::{
     CompletionResponse, CompletionTextEdit, CompletionParams, Diagnostic,
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents,
     HoverProviderCapability, InitializeResult, MarkupContent, MarkupKind, OneOf,
-    Position, PublishDiagnosticsParams, ServerCapabilities, ServerInfo,
+    Position, Range, PublishDiagnosticsParams, ServerCapabilities, ServerInfo,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextEdit, Url,
 };
@@ -85,6 +85,7 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
                         work_done_progress_options:
                             crate::lsp::WorkDoneProgressOptions::default(),
                     }),
+                    document_formatting_provider: Some(OneOf::Left(true)),
                     text_document_sync: Some(TextDocumentSyncCapability::Options(
                         TextDocumentSyncOptions {
                             open_close: Some(true),
@@ -116,6 +117,31 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
                     is_incomplete: false,
                     items,
                 })))
+            }
+        })
+        // ── Hover ────────────────────────────────────────────────
+        .request::<request::HoverRequest, _>(|state, params| {
+            let uri = &params.text_document_position_params.text_document.uri;
+            let pos = params.text_document_position_params.position;
+            let text = state.docs.get(uri).unwrap_or_default();
+            let (before, after) = split_at_position(text, pos);
+            let hover = crate::hover::hover_at(&before, &after);
+            async move { Ok(hover) }
+        })
+        // ── Formatting ────────────────────────────────────────────
+        .request::<request::Formatting, _>(|state, params| {
+            let uri = params.text_document.uri;
+            let text = state.docs.get(&uri).unwrap_or_default().to_string();
+            let formatted = arcis_fmt::format(&text).unwrap_or(text.clone());
+            let line_count = text.lines().count();
+            async move {
+                Ok(Some(vec![TextEdit {
+                    range: Range::new(
+                        Position::new(0, 0),
+                        Position::new(line_count as u32 + 1, 0),
+                    ),
+                    new_text: formatted,
+                }]))
             }
         })
         // ── Document-changed notifications ────────────────────────
@@ -197,6 +223,36 @@ fn publish_diagnostics(
         diagnostics: diags,
         version: None,
     });
+}
+
+/// Split the current line of `text` at `pos`, returning
+/// `(before, after)`. `before` is text on the cursor line up to the
+/// cursor; `after` is the rest of that line (not including `\n`).
+/// Both exclude the character under the cursor.
+pub fn split_at_position(text: &str, pos: Position) -> (String, String) {
+    // Find the start of the cursor line.
+    let mut line_start = 0;
+    let mut cur_line: u32 = 0;
+    for (i, c) in text.char_indices() {
+        if cur_line == pos.line {
+            line_start = i;
+            break;
+        }
+        if c == '\n' {
+            cur_line += 1;
+        }
+    }
+    // Slice the cursor line (without `\n`).
+    let line_end = text[line_start..]
+        .find('\n')
+        .map(|n| line_start + n)
+        .unwrap_or(text.len());
+    let cursor_line = &text[line_start..line_end];
+
+    let char_count = pos.character.min(cursor_line.chars().count() as u32) as usize;
+    let before: String = cursor_line.chars().take(char_count).collect();
+    let after: String = cursor_line.chars().skip(char_count).collect();
+    (before, after)
 }
 
 /// Build the prefix (text up to the cursor) given the full document

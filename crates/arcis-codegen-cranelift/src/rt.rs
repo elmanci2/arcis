@@ -14,6 +14,7 @@ use cranelift_object::ObjectModule;
 
 /// One-`FuncId`-per-runtime-function struct, declared once per module.
 pub(crate) struct Runtime {
+    // Phase 1: strings, printing, numbers.
     pub string_from_cstr: FuncId,
     pub string_concat: FuncId,
     pub string_eq: FuncId,
@@ -22,6 +23,36 @@ pub(crate) struct Runtime {
     pub println: FuncId,
     pub num_to_string: FuncId,
     pub bool_to_string: FuncId,
+
+    // Phase 2: string methods.
+    pub string_to_uppercase: FuncId,
+    pub string_to_lowercase: FuncId,
+    pub string_trim: FuncId,
+    pub string_substring: FuncId,
+    pub string_index_of: FuncId,
+    pub string_includes: FuncId,
+    pub string_char_at: FuncId,
+
+    // Phase 2: I/O.
+    pub read_line: FuncId,
+
+    // Phase 2: arrays.
+    pub vec_new: FuncId,
+    pub vec_push: FuncId,
+    pub vec_pop: FuncId,
+    pub vec_unshift: FuncId,
+    pub vec_len: FuncId,
+    pub vec_get: FuncId,
+    pub vec_set: FuncId,
+    #[allow(dead_code)]
+    pub vec_drop: FuncId,
+
+    // Phase 2: objects.
+    pub object_new: FuncId,
+    pub object_set: FuncId,
+    pub object_get: FuncId,
+    #[allow(dead_code)]
+    pub object_drop: FuncId,
 }
 
 impl Runtime {
@@ -37,70 +68,55 @@ impl Runtime {
             }
             s
         };
+        let mut decl = |name: &str, sig: Signature| {
+            module
+                .declare_function(name, Linkage::Import, &sig)
+                .map_err(|e| format!("declare `{}`: {}", name, e))
+        };
 
-        // (const char*) -> ArcisString*        (i64 handle)
-        let string_from_cstr = module
-            .declare_function(
-                "arcis_string_from_cstr",
-                Linkage::Import,
-                &build_sig(&[I64], &[I64]),
-            )
-            .map_err(|e| format!("declare `arcis_string_from_cstr`: {}", e))?;
-        // (ArcisString*, ArcisString*) -> ArcisString*
-        let string_concat = module
-            .declare_function(
-                "arcis_string_concat",
-                Linkage::Import,
-                &build_sig(&[I64, I64], &[I64]),
-            )
-            .map_err(|e| format!("declare `arcis_string_concat`: {}", e))?;
-        // (ArcisString*, ArcisString*) -> int32_t  (0/1)
-        let string_eq = module
-            .declare_function(
-                "arcis_string_eq",
-                Linkage::Import,
-                &build_sig(&[I64, I64], &[I32]),
-            )
-            .map_err(|e| format!("declare `arcis_string_eq`: {}", e))?;
-        // (ArcisString*) -> void
-        let string_drop = module
-            .declare_function(
-                "arcis_string_drop",
-                Linkage::Import,
-                &build_sig(&[I64], &[]),
-            )
-            .map_err(|e| format!("declare `arcis_string_drop`: {}", e))?;
-        // (ArcisString*) -> void
-        let print = module
-            .declare_function(
-                "arcis_print",
-                Linkage::Import,
-                &build_sig(&[I64], &[]),
-            )
-            .map_err(|e| format!("declare `arcis_print`: {}", e))?;
-        let println = module
-            .declare_function(
-                "arcis_println",
-                Linkage::Import,
-                &build_sig(&[I64], &[]),
-            )
-            .map_err(|e| format!("declare `arcis_println`: {}", e))?;
-        // (double) -> ArcisString*
-        let num_to_string = module
-            .declare_function(
-                "arcis_num_to_string",
-                Linkage::Import,
-                &build_sig(&[F64], &[I64]),
-            )
-            .map_err(|e| format!("declare `arcis_num_to_string`: {}", e))?;
-        // (int32_t) -> ArcisString*
-        let bool_to_string = module
-            .declare_function(
-                "arcis_bool_to_string",
-                Linkage::Import,
-                &build_sig(&[I32], &[I64]),
-            )
-            .map_err(|e| format!("declare `arcis_bool_to_string`: {}", e))?;
+        // Phase 1
+        let string_from_cstr = decl("arcis_string_from_cstr", build_sig(&[I64], &[I64]))?;
+        let string_concat = decl("arcis_string_concat", build_sig(&[I64, I64], &[I64]))?;
+        let string_eq = decl("arcis_string_eq", build_sig(&[I64, I64], &[I32]))?;
+        let string_drop = decl("arcis_string_drop", build_sig(&[I64], &[]))?;
+        let print = decl("arcis_print", build_sig(&[I64], &[]))?;
+        let println = decl("arcis_println", build_sig(&[I64], &[]))?;
+        let num_to_string = decl("arcis_num_to_string", build_sig(&[F64], &[I64]))?;
+        let bool_to_string = decl("arcis_bool_to_string", build_sig(&[I32], &[I64]))?;
+
+        // Phase 2: string methods  —  (ArcisString*) -> ArcisString*
+        let string_to_uppercase = decl("arcis_string_to_uppercase", build_sig(&[I64], &[I64]))?;
+        let string_to_lowercase = decl("arcis_string_to_lowercase", build_sig(&[I64], &[I64]))?;
+        let string_trim = decl("arcis_string_trim", build_sig(&[I64], &[I64]))?;
+        // (ArcisString*, int64_t, int64_t) -> ArcisString*
+        let string_substring = decl("arcis_string_substring", build_sig(&[I64, I64, I64], &[I64]))?;
+        // (ArcisString*, ArcisString*) -> f64
+        let string_index_of = decl("arcis_string_index_of", build_sig(&[I64, I64], &[F64]))?;
+        // (ArcisString*, ArcisString*) -> int32_t
+        let string_includes = decl("arcis_string_includes", build_sig(&[I64, I64], &[I32]))?;
+        // (ArcisString*, int64_t) -> ArcisString*
+        let string_char_at = decl("arcis_string_char_at", build_sig(&[I64, I64], &[I64]))?;
+
+        // Phase 2: I/O  —  () -> ArcisString*
+        let read_line = decl("arcis_read_line", build_sig(&[], &[I64]))?;
+
+        // Phase 2: arrays
+        let vec_new = decl("arcis_vec_new", build_sig(&[], &[I64]))?;
+        let vec_push = decl("arcis_vec_push", build_sig(&[I64, I64], &[]))?;
+        let vec_pop = decl("arcis_vec_pop", build_sig(&[I64], &[I64]))?;
+        let vec_unshift = decl("arcis_vec_unshift", build_sig(&[I64, I64], &[]))?;
+        let vec_len = decl("arcis_vec_len", build_sig(&[I64], &[I32]))?;
+        let vec_get = decl("arcis_vec_get", build_sig(&[I64, I32], &[I64]))?;
+        let vec_set = decl("arcis_vec_set", build_sig(&[I64, I32, I64], &[]))?;
+        let vec_drop = decl("arcis_vec_drop", build_sig(&[I64], &[]))?;
+
+        // Phase 2: objects
+        let object_new = decl("arcis_object_new", build_sig(&[], &[I64]))?;
+        // (ArcisObject*, const char* key, int64_t value) -> void
+        let object_set = decl("arcis_object_set", build_sig(&[I64, I64, I64], &[]))?;
+        // (ArcisObject*, const char* key) -> int64_t value
+        let object_get = decl("arcis_object_get", build_sig(&[I64, I64], &[I64]))?;
+        let object_drop = decl("arcis_object_drop", build_sig(&[I64], &[]))?;
 
         Ok(Runtime {
             string_from_cstr,
@@ -111,6 +127,26 @@ impl Runtime {
             println,
             num_to_string,
             bool_to_string,
+            string_to_uppercase,
+            string_to_lowercase,
+            string_trim,
+            string_substring,
+            string_index_of,
+            string_includes,
+            string_char_at,
+            read_line,
+            vec_new,
+            vec_push,
+            vec_pop,
+            vec_unshift,
+            vec_len,
+            vec_get,
+            vec_set,
+            vec_drop,
+            object_new,
+            object_set,
+            object_get,
+            object_drop,
         })
     }
 }

@@ -71,49 +71,141 @@ pub(crate) fn emit(
             emit_binary(builder, fctx, op, left, right, runtime, user_fns, module)
         }
         Expr::Call { callee, args } => {
-            // Phase 1 dispatch:
-            //  - `print(...)` → builtin (single argument)
-            //  - `Ident(name)` where name ∈ user_fns → user-function call
-            //  - anything else: error.
+            // Dispatch print, input, method calls, and user functions.
             if let Expr::Ident(fname) = callee.as_ref() {
                 if fname == "print" {
                     let v = crate::builtin::emit_print(builder, fctx, args, runtime, user_fns, module)?;
                     return Ok((v, ArcisType::Void));
+                }
+                if fname == "input" {
+                    let callee_r = module.declare_func_in_func(runtime.read_line, builder.func);
+                    let call = builder.ins().call(callee_r, &[]);
+                    let h = builder.inst_results(call)[0];
+                    return Ok((h, ArcisType::String));
                 }
                 if let Some(&func_id) = user_fns.get(fname) {
                     let result = emit_user_call(builder, fctx, func_id, args, runtime, user_fns, module)?;
                     return Ok(result);
                 }
             }
+            // Method call: arr.push(x) / s.toUpperCase() / etc.
+            if let Expr::Member { object, property } = callee.as_ref() {
+                let dispatched = crate::method::emit(
+                    builder, fctx, object, property, args, runtime, user_fns, module,
+                )?;
+                if let Some(result) = dispatched {
+                    return Ok(result);
+                }
+            }
             Err("this call form is not yet supported by the Cranelift backend".to_string())
         }
         Expr::Member { object, property } => {
-            // Phase 1: only `.length` on a string. We map it to a runtime
-            // call that returns the byte length as an `i64`, then cast to
-            // `f64` to match the existing Arcis semantic (`.length` is
-            // always a number).
             if property == "length" {
-                if let Expr::Ident(name) = object.as_ref() {
-                    if matches!(fctx.ty(name), Some(ArcisType::String)) {
-                        let (handle, _) = emit(
-                            builder, fctx, object, runtime, user_fns, module,
-                        )?;
-                        let len_value = emit_string_length(builder, handle, module, runtime)?;
-                        let as_f64 = builder.ins().fcvt_from_sint(F64, len_value);
+                let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
+                let len_val = match obj_ty {
+                    ArcisType::String => emit_string_length(builder, obj_val, module, runtime)?,
+                    ArcisType::Array => {
+                        let callee = module.declare_func_in_func(runtime.vec_len, builder.func);
+                        let call = builder.ins().call(callee, &[obj_val]);
+                        let raw = builder.inst_results(call)[0];
+                        let as_i64 = builder.ins().uextend(I64, raw);
+                        as_i64
+                    }
+                    _ => return Err(format!(".length is not supported on {:?}", obj_ty)),
+                };
+                let as_f64 = builder.ins().fcvt_from_sint(F64, len_val);
+                return Ok((as_f64, ArcisType::Number));
+            }
+            // Object field get: obj.field → arcis_object_get(obj, "field")
+            let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
+            if obj_ty == ArcisType::Object {
+                // Look up the field type from the object's declared shape.
+                let field_ty = if let Expr::Ident(obj_name) = object.as_ref() {
+                    fctx.object_field_ty(obj_name, property)
+                } else {
+                    None
+                };
+                let key_handle = emit_string_literal(
+                    builder, fctx, module, property, runtime,
+                )?;
+                let callee_get = module.declare_func_in_func(runtime.object_get, builder.func);
+                let call_get = builder.ins().call(callee_get, &[obj_val, key_handle]);
+                let raw = builder.inst_results(call_get)[0];
+                match field_ty {
+                    Some(ArcisType::String) => {
+                        return Ok((raw, ArcisType::String));
+                    }
+                    Some(ArcisType::Boolean) => {
+                        let as_i8 = builder.ins().ireduce(I8, raw);
+                        return Ok((as_i8, ArcisType::Boolean));
+                    }
+                    _ => {
+                        // Default: interpret as f64 number.
+                        let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), raw);
                         return Ok((as_f64, ArcisType::Number));
                     }
                 }
-                Err("`.length` is only supported on string identifiers in Phase 1".to_string())
-            } else {
-                Err(format!(
-                    "member access `.{}` is not supported by the Cranelift backend",
-                    property
-                ))
             }
+            Err(format!(
+                "member access `.{}` is not yet supported by the Cranelift backend",
+                property
+            ))
         }
-        Expr::Index { .. } => Err("array indexing is not yet supported by the Cranelift backend (Phase 2)".to_string()),
-        Expr::ArrayLiteral { .. } => Err("array literals are not yet supported by the Cranelift backend (Phase 2)".to_string()),
-        Expr::ObjectLiteral { .. } => Err("object literals are not yet supported by the Cranelift backend (Phase 2)".to_string()),
+        Expr::Index { object, index } => {
+            let (obj_val, _obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
+            let (idx_val, _idx_ty) = emit(builder, fctx, index, runtime, user_fns, module)?;
+            let idx_i32 = builder.ins().fcvt_to_sint(I32, idx_val);
+            let callee = module.declare_func_in_func(runtime.vec_get, builder.func);
+            let call = builder.ins().call(callee, &[obj_val, idx_i32]);
+            let handle = builder.inst_results(call)[0];
+            // Infer element type from the array binding.
+            let elem_ty = if let Expr::Ident(obj_name) = object.as_ref() {
+                fctx.element_ty(obj_name).unwrap_or(ArcisType::Number)
+            } else {
+                ArcisType::Number
+            };
+            let (v, ty) = match elem_ty {
+                ArcisType::String => (handle, ArcisType::String),
+                ArcisType::Number => {
+                    let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), handle);
+                    (as_f64, ArcisType::Number)
+                }
+                ArcisType::Boolean => {
+                    let as_i8 = builder.ins().ireduce(I8, handle);
+                    (as_i8, ArcisType::Boolean)
+                }
+                ArcisType::Object | ArcisType::Array => (handle, elem_ty),
+                _ => (handle, ArcisType::Number),
+            };
+            Ok((v, ty))
+        }
+        Expr::ArrayLiteral { elements } => {
+            let callee_new = module.declare_func_in_func(runtime.vec_new, builder.func);
+            let call_new = builder.ins().call(callee_new, &[]);
+            let vec_handle = builder.inst_results(call_new)[0];
+            for elem in elements {
+                // Promote element to I64 handle. Numbers need bitcast to i64.
+                let (elem_val, elem_ty) = emit(builder, fctx, elem, runtime, user_fns, module)?;
+                let i64_val = promote_to_i64(builder, elem_val, elem_ty);
+                let callee_push = module.declare_func_in_func(runtime.vec_push, builder.func);
+                builder.ins().call(callee_push, &[vec_handle, i64_val]);
+            }
+            Ok((vec_handle, ArcisType::Array))
+        }
+        Expr::ObjectLiteral { fields } => {
+            let callee_new = module.declare_func_in_func(runtime.object_new, builder.func);
+            let call_new = builder.ins().call(callee_new, &[]);
+            let obj_handle = builder.inst_results(call_new)[0];
+            for (key, value) in fields {
+                let (val_v, val_ty) = emit(builder, fctx, value, runtime, user_fns, module)?;
+                let i64_val = promote_to_i64(builder, val_v, val_ty);
+                // key becomes a string literal data object → call arcis_string_from_cstr
+                let key_handle = emit_string_literal(builder, fctx, module, key, runtime)?;
+                let callee_set = module.declare_func_in_func(runtime.object_set, builder.func);
+                builder.ins().call(callee_set, &[obj_handle, key_handle, i64_val]);
+            }
+            Ok((obj_handle, ArcisType::Object))
+        }
         Expr::Path { .. } => Err("static paths are not supported by the Cranelift backend".to_string()),
     }
 }
@@ -326,33 +418,32 @@ fn emit_string_literal(
     let data_id = if let Some(&existing) = fctx.string_literals.get(&bytes) {
         existing
     } else {
-        // Build a unique, valid C identifier name derived from the bytes
-        // so two functions emitting the same literal share a `DataId`. The
-        // counter at the end disambiguates collisions in pathological
-        // cases (e.g. two distinct strings whose hash maps collide).
-        let mut name = String::from("arcis_str_");
+        let mut hash: u64 = 0xcbf29ce484222325;
         for &b in &bytes {
-            if b.is_ascii_alphanumeric() {
-                name.push(b as char);
-            } else {
-                name.push('_');
+            hash = hash.wrapping_mul(0x100000001b3).wrapping_add(b as u64);
+        }
+        let name = format!("arcis_str_{:016x}", hash);
+        // Check if this name already exists globally (e.g., declared by
+        // another function in the same module).
+        let id = if let Some(existing) = module.declarations().get_name(&name) {
+            match existing {
+                cranelift_module::FuncOrDataId::Data(did) => did,
+                _ => {
+                    return Err(format!("name collision: `{}` is a function", name));
+                }
             }
-        }
-        // Trim trailing '_' to avoid colliding on trailing NUL escapes.
-        while name.ends_with('_') {
-            name.pop();
-        }
-        fctx.string_literal_counter += 1;
-        name.push_str(&format!("_{}", fctx.string_literal_counter));
-        let id = module
-            .declare_data(&name, Linkage::Local, false, false)
-            .map_err(|e| format!("declare string literal data `{}`: {}", name, e))?;
-        let mut dd = DataDescription::new();
-        dd.define(bytes.clone().into());
-        dd.set_align(1);
-        module
-            .define_data(id, &dd)
-            .map_err(|e| format!("define string literal data: {}", e))?;
+        } else {
+            let id = module
+                .declare_data(&name, Linkage::Local, false, false)
+                .map_err(|e| format!("declare string literal data `{}`: {}", name, e))?;
+            let mut dd = DataDescription::new();
+            dd.define(bytes.clone().into());
+            dd.set_align(1);
+            module
+                .define_data(id, &dd)
+                .map_err(|e| format!("define string literal data: {}", e))?;
+            id
+        };
         fctx.string_literals.insert(bytes.clone(), id);
         id
     };
@@ -370,15 +461,11 @@ fn emit_string_length(
     _module: &mut ObjectModule,
     _runtime: &Runtime,
 ) -> Result<cranelift_codegen::ir::Value, String> {
-    // Read the `len` field of the runtime record: the layout is
-    //   struct { char* ptr; uint64_t len; uint64_t cap; }
-    // On all supported targets, `int64_t` reads of a properly-aligned slot
-    // are fine. `len` lives at offset 8 from the handle.
     let offset = builder.ins().iconst(I64, 8);
     let addr = builder.ins().iadd(handle, offset);
     let len = builder
         .ins()
-        .load(I64, MemFlags::trusted(), addr, 0);
+        .load(I64, MemFlags::trusted(), addr, 0i32);
     Ok(len)
 }
 
@@ -405,5 +492,24 @@ fn promote_to_string(
             Ok(builder.inst_results(call)[0])
         }
         ArcisType::Void => Err("cannot promote void to string".to_string()),
+        ArcisType::Array => Err("cannot promote array to string".to_string()),
+        ArcisType::Object => Err("cannot promote object to string".to_string()),
+    }
+}
+
+/// Promote any Arcis value to an `i64` handle.
+/// - Numbers: bitcast the f64 bits to i64.
+/// - Booleans: widen to i64 (0 or 1).
+/// - Already-I64 handles (String, Array, Object): pass through.
+pub(crate) fn promote_to_i64(
+    builder: &mut FunctionBuilder,
+    value: cranelift_codegen::ir::Value,
+    ty: ArcisType,
+) -> cranelift_codegen::ir::Value {
+    match ty {
+        ArcisType::Number => builder.ins().bitcast(I64, MemFlags::new(), value),
+        ArcisType::Boolean => builder.ins().uextend(I64, value),
+        ArcisType::String | ArcisType::Array | ArcisType::Object => value,
+        ArcisType::Void => builder.ins().iconst(I64, 0),
     }
 }

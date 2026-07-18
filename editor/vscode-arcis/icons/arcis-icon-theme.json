@@ -1,0 +1,13 @@
+{
+  "iconDefinitions": {
+    "_arcis_file": {
+      "iconPath": "../assets/logo.svg"
+    }
+  },
+  "fileExtensions": {
+    "tsr": "_arcis_file"
+  },
+  "languageIds": {
+    "arcis": "_arcis_file"
+  }
+}

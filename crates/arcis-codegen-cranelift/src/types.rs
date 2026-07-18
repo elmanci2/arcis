@@ -21,6 +21,10 @@ pub(crate) enum ArcisType {
     Boolean,
     String,
     Void,
+    /// Opaque `I64` handle to an `ArcisVec*` (allocated by the runtime).
+    Array,
+    /// Opaque `I64` handle to an `ArcisObject*` (allocated by the runtime).
+    Object,
 }
 
 impl ArcisType {
@@ -28,51 +32,44 @@ impl ArcisType {
     pub(crate) fn to_cl(self) -> Type {
         match self {
             ArcisType::Number => F64,
-            // Booleans travel as `i8` (0 or 1) — Cranelift doesn't have a
-            // first-class boolean type, but `i8` keeps the ABI portable.
             ArcisType::Boolean => I8,
-            // Strings are passed as opaque `i64` handles (pointers to the
-            // runtime's heap-allocated `{char*, u64, u64}` records).
             ArcisType::String => I64,
             ArcisType::Void => I8, // placeholder; not used for storage
+            ArcisType::Array => I64,
+            ArcisType::Object => I64,
         }
     }
 
-    /// Heuristic: is this type passed as an `I64` handle? (Today: only
-    /// `String` is.)
+    /// Heuristic: is this type passed as an `I64` handle?
     pub(crate) fn is_handle(self) -> bool {
-        matches!(self, ArcisType::String)
+        matches!(self, ArcisType::String | ArcisType::Array | ArcisType::Object)
     }
 }
 
 /// Convert an Arcis type AST node into an [`ArcisType`] when possible.
-/// Unknown / non-primitive types (e.g. inline `T[]`, object types) are
-/// rejected — they are part of the Phase 2+ scope.
 pub(crate) fn from_ast(name: &str, is_array: bool) -> Result<ArcisType, String> {
     if is_array {
-        return Err(format!(
-            "the Cranelift backend does not yet support arrays of {} (Phase 2)",
-            name
-        ));
+        // `T[]` becomes ArcisType::Array regardless of the inner type.
+        // The inner type is stored in the Type AST node but the runtime
+        // stores everything as i64 handles anyway.
+        return Ok(ArcisType::Array);
     }
     match name {
         "number" => Ok(ArcisType::Number),
         "boolean" => Ok(ArcisType::Boolean),
         "string" => Ok(ArcisType::String),
         "void" => Ok(ArcisType::Void),
-        other => Err(format!(
-            "unsupported type `{}` for the Cranelift backend (Phase 2+)",
-            other
-        )),
+        other => {
+            // Could be an object type with a __Obj hash name. For now
+            // we accept any non-primitive as Object.
+            if other.starts_with("__Obj") || !other.is_empty() {
+                Ok(ArcisType::Object)
+            } else {
+                Err(format!(
+                    "unsupported type `{}` for the Cranelift backend",
+                    other
+                ))
+            }
+        }
     }
-}
-
-/// Useful alias for the signature of runtime functions that take two
-/// `ArcisString` handles and return `i32` (a 1/0 equality flag, e.g. for
-/// `arcis_string_eq`).
-pub(crate) fn cl_handle_eq_sig() -> Vec<Type> {
-    vec![I64, I64]
-}
-pub(crate) fn cl_handle_eq_returns() -> Vec<Type> {
-    vec![I32]
 }

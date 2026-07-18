@@ -51,6 +51,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 
 typedef struct {
@@ -210,6 +211,277 @@ int32_t arcis_string_eq(ArcisString* a, ArcisString* b) {
 int64_t arcis_current_pid(void) {
     return (int64_t)getpid();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// String methods (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+ArcisString* arcis_string_to_uppercase(ArcisString* s) {
+    if (s == NULL || s->len == 0) {
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    ArcisString* out = arcis_string_alloc_internal(NULL, s->len);
+    if (out == NULL) return arcis_string_alloc_internal(NULL, 0);
+    for (uint64_t i = 0; i < s->len; i++) {
+        out->ptr[i] = (char)toupper((unsigned char)s->ptr[i]);
+    }
+    out->ptr[s->len] = '\0';
+    out->len = s->len;
+    return out;
+}
+
+ArcisString* arcis_string_to_lowercase(ArcisString* s) {
+    if (s == NULL || s->len == 0) {
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    ArcisString* out = arcis_string_alloc_internal(NULL, s->len);
+    if (out == NULL) return arcis_string_alloc_internal(NULL, 0);
+    for (uint64_t i = 0; i < s->len; i++) {
+        out->ptr[i] = (char)tolower((unsigned char)s->ptr[i]);
+    }
+    out->ptr[s->len] = '\0';
+    out->len = s->len;
+    return out;
+}
+
+ArcisString* arcis_string_trim(ArcisString* s) {
+    if (s == NULL || s->len == 0) {
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    uint64_t start = 0;
+    while (start < s->len && isspace((unsigned char)s->ptr[start])) {
+        start++;
+    }
+    uint64_t end = s->len;
+    while (end > start && isspace((unsigned char)s->ptr[end - 1])) {
+        end--;
+    }
+    uint64_t new_len = end - start;
+    return arcis_string_alloc_internal(s->ptr + start, new_len);
+}
+
+ArcisString* arcis_string_substring(ArcisString* s, int64_t a, int64_t b) {
+    if (s == NULL || s->len == 0) {
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    uint64_t start = (a < 0) ? 0 : (uint64_t)a;
+    uint64_t end   = (b < 0) ? 0 : (uint64_t)b;
+    if (start > s->len) start = s->len;
+    if (end > s->len) end = s->len;
+    if (start > end) start = end;
+    uint64_t new_len = end - start;
+    return arcis_string_alloc_internal(s->ptr + start, new_len);
+}
+
+double arcis_string_index_of(ArcisString* haystack, ArcisString* needle) {
+    if (haystack == NULL || needle == NULL) return -1.0;
+    if (needle->len == 0) return 0.0;
+    if (needle->len > haystack->len) return -1.0;
+    for (uint64_t i = 0; i <= haystack->len - needle->len; i++) {
+        if (memcmp(haystack->ptr + i, needle->ptr, needle->len) == 0) {
+            return (double)i;
+        }
+    }
+    return -1.0;
+}
+
+int32_t arcis_string_includes(ArcisString* haystack, ArcisString* needle) {
+    double idx = arcis_string_index_of(haystack, needle);
+    return idx >= 0.0 ? 1 : 0;
+}
+
+ArcisString* arcis_string_char_at(ArcisString* s, int64_t idx) {
+    if (s == NULL || idx < 0 || (uint64_t)idx >= s->len) {
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    return arcis_string_alloc_internal(s->ptr + (uint64_t)idx, 1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+ArcisString* arcis_read_line(void) {
+    char* line = NULL;
+    size_t cap = 0;
+    ssize_t n = getline(&line, &cap, stdin);
+    if (n < 0) {
+        if (line != NULL) free(line);
+        return arcis_string_alloc_internal(NULL, 0);
+    }
+    // Drop trailing newline if present.
+    if (n > 0 && line[n - 1] == '\n') {
+        n--;
+    }
+    ArcisString* out = arcis_string_alloc_internal(line, (uint64_t)n);
+    free(line);
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arrays: ArcisVec (Phase 2)
+//
+// ArcisVec is a growable array of `int64_t` slots. Every Arcis value
+// (number, string handle, boolean, object handle) is stored as a single
+// `int64_t`.  The Cranelift codegen stores `f64` numbers as their raw
+// bits inside the slot and converts with `bitcast` when loading/storing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct {
+    int64_t* elements;
+    int32_t  len;
+    int32_t  cap;
+} ArcisVec;
+
+ArcisVec* arcis_vec_new(void) {
+    ArcisVec* v = (ArcisVec*)malloc(sizeof(ArcisVec));
+    if (v == NULL) abort();
+    v->elements = NULL;
+    v->len = 0;
+    v->cap = 0;
+    return v;
+}
+
+void arcis_vec_push(ArcisVec* v, int64_t elem) {
+    if (v == NULL) return;
+    if (v->len >= v->cap) {
+        int32_t new_cap = v->cap == 0 ? 8 : v->cap * 2;
+        int64_t* p = (int64_t*)realloc(v->elements, (size_t)new_cap * sizeof(int64_t));
+        if (p == NULL) abort();
+        v->elements = p;
+        v->cap = new_cap;
+    }
+    v->elements[v->len++] = elem;
+}
+
+int64_t arcis_vec_pop(ArcisVec* v) {
+    if (v == NULL || v->len == 0) return 0;
+    return v->elements[--v->len];
+}
+
+void arcis_vec_unshift(ArcisVec* v, int64_t elem) {
+    if (v == NULL) return;
+    if (v->len >= v->cap) {
+        int32_t new_cap = v->cap == 0 ? 8 : v->cap * 2;
+        int64_t* p = (int64_t*)realloc(v->elements, (size_t)new_cap * sizeof(int64_t));
+        if (p == NULL) abort();
+        v->elements = p;
+        v->cap = new_cap;
+    }
+    // Memmove right by one.
+    if (v->len > 0) {
+        memmove(v->elements + 1, v->elements, (size_t)v->len * sizeof(int64_t));
+    }
+    v->elements[0] = elem;
+    v->len++;
+}
+
+int32_t arcis_vec_len(ArcisVec* v) {
+    if (v == NULL) return 0;
+    return v->len;
+}
+
+int64_t arcis_vec_get(ArcisVec* v, int32_t idx) {
+    if (v == NULL || idx < 0 || idx >= v->len) return 0;
+    return v->elements[idx];
+}
+
+void arcis_vec_set(ArcisVec* v, int32_t idx, int64_t elem) {
+    if (v == NULL || idx < 0 || idx >= v->len) return;
+    v->elements[idx] = elem;
+}
+
+void arcis_vec_drop(ArcisVec* v) {
+    if (v == NULL) return;
+    if (v->elements != NULL) free(v->elements);
+    free(v);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Objects: ArcisObject (Phase 2 stub — dictionary-based)
+//
+// Phase 2 stores object fields as key-value pairs. Phase 3 will add
+// field-specific get/set with typed struct layout when object shapes
+// are known at compile time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct {
+    ArcisString* key_handle;
+    int64_t      value;
+} ArcisField;
+
+typedef struct {
+    ArcisField* fields;
+    int32_t     count;
+    int32_t     cap;
+} ArcisObject;
+
+ArcisObject* arcis_object_new(void) {
+    ArcisObject* obj = (ArcisObject*)malloc(sizeof(ArcisObject));
+    if (obj == NULL) abort();
+    obj->fields = NULL;
+    obj->count = 0;
+    obj->cap = 0;
+    return obj;
+}
+
+void arcis_object_set(ArcisObject* obj, ArcisString* key, int64_t value) {
+    if (obj == NULL || key == NULL) return;
+    for (int32_t i = 0; i < obj->count; i++) {
+        ArcisField* f = &obj->fields[i];
+        if (f->key_handle != NULL) {
+            ArcisString* ek = f->key_handle;
+            if (ek->len == key->len && memcmp(ek->ptr, key->ptr, key->len) == 0) {
+                f->value = value;
+                return;
+            }
+        }
+    }
+    if (obj->count >= obj->cap) {
+        int32_t new_cap = obj->cap == 0 ? 4 : obj->cap * 2;
+        ArcisField* p = (ArcisField*)realloc(obj->fields, (size_t)new_cap * sizeof(ArcisField));
+        if (p == NULL) abort();
+        obj->fields = p;
+        obj->cap = new_cap;
+    }
+    // Clone the key handle so it survives the caller.
+    ArcisString* cloned = arcis_string_alloc_internal(key->ptr, key->len);
+    obj->fields[obj->count].key_handle = cloned;
+    obj->fields[obj->count].value = value;
+    obj->count++;
+}
+
+int64_t arcis_object_get(ArcisObject* obj, ArcisString* key) {
+    if (obj == NULL || key == NULL || key->len == 0) return 0;
+    for (int32_t i = 0; i < obj->count; i++) {
+        ArcisString* existing = obj->fields[i].key_handle;
+        if (existing != NULL && existing->len == key->len
+            && memcmp(existing->ptr, key->ptr, key->len) == 0) {
+            return obj->fields[i].value;
+        }
+    }
+    return 0;
+}
+
+void arcis_object_drop(ArcisObject* obj) {
+    if (obj == NULL) return;
+    // Keys are ArcisString* handles owned by the object; free them.
+    for (int32_t i = 0; i < obj->count; i++) {
+        arcis_string_drop(obj->fields[i].key_handle);
+    }
+    if (obj->fields != NULL) free(obj->fields);
+    free(obj);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ArcisProcess placeholder struct (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct {
+    ArcisString* stdout_;
+    ArcisString* stderr_;
+    int32_t      exit_code;
+} ArcisProcess;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform entry stub.

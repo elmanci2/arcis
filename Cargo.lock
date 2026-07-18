@@ -81,6 +81,7 @@ name = "arcis"
 version = "0.1.0"
 dependencies = [
  "arcis-driver",
+ "arcis-fmt",
  "clap",
 ]
 
@@ -126,6 +127,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcis-fmt"
+version = "0.1.0"
+dependencies = [
+ "arcis-lexer",
+ "arcis-parser",
+]
+
+[[package]]
 name = "arcis-lexer"
 version = "0.1.0"
 
@@ -143,6 +152,7 @@ name = "arcis-lsp"
 version = "0.1.0"
 dependencies = [
  "arcis-ast",
+ "arcis-fmt",
  "arcis-lexer",
  "arcis-parser",
  "arcis-validation",

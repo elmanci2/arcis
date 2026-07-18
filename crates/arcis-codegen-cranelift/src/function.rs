@@ -75,14 +75,16 @@ pub(crate) fn emit_function(
                 builder.ins().return_(&[zero]);
             }
             ArcisType::String => {
-                // Empty string: call arcis_string_from_cstr(NULL) which the
-                // runtime implements as `arcis_string_alloc_internal(NULL, 0)`.
                 let null_ptr = builder.ins().iconst(I64, 0);
                 let callee =
                     module.declare_func_in_func(runtime.string_from_cstr, builder.func);
                 let call = builder.ins().call(callee, &[null_ptr]);
                 let handle = builder.inst_results(call)[0];
                 builder.ins().return_(&[handle]);
+            }
+            ArcisType::Array | ArcisType::Object => {
+                let zero = builder.ins().iconst(I64, 0);
+                builder.ins().return_(&[zero]);
             }
         }
     }

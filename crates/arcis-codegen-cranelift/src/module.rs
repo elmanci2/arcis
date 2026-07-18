@@ -111,11 +111,9 @@ pub(crate) fn emit(
             cranelift_codegen::settings::builder(),
         );
         if let Err(errs) = cranelift_codegen::verifier::verify_function(&ctx.func, &flags) {
-            return Err(format!(
-                "verify arcis_main: {} (func: {})",
-                errs,
-                ctx.func.display()
-            ));
+            eprintln!("=== VERIFY ERROR: {} ===", errs);
+            eprintln!("{}", ctx.func.display());
+            return Err(format!("verify arcis_main: {}", errs));
         }
 
         let mut builder_ctx = FunctionBuilderContext::new();
@@ -150,13 +148,7 @@ pub(crate) fn emit(
     }
     module
         .define_function(main_id, &mut ctx)
-        .map_err(|e| {
-            format!(
-                "define arcis_main: {}\n\n=== IR ===\n{}",
-                e,
-                ctx.func.display()
-            )
-        })?;
+        .map_err(|e| format!("define arcis_main: {}", e))?;
     Ok(())
 }
 

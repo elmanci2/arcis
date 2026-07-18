@@ -19,17 +19,16 @@ use std::collections::HashMap;
 
 use arcis_ast::{Expr, Stmt};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::types::{F64, I8};
-use cranelift_codegen::ir::{InstBuilder, Opcode};
+use cranelift_codegen::ir::types::{F64, I32, I64, I8};
+use cranelift_codegen::ir::{InstBuilder, MemFlags};
 use cranelift_frontend::FunctionBuilder;
-use cranelift_module::FuncId;
-use cranelift_module::Module as CraneliftModule;
+use cranelift_module::{DataDescription, FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
 use crate::context::{FunctionCtx, LoopFrame};
 use crate::expr;
 use crate::rt::Runtime;
-use crate::types::from_ast;
+use crate::types::{from_ast, ArcisType};
 
 /// Lower a single Arcis statement in the current Cranelift block. After
 /// this returns, the builder's current block is in a state suitable for
@@ -51,6 +50,15 @@ pub(crate) fn emit_stmt(
                 None => inferred_ty,
             };
             fctx.define(name, resolved, v, builder);
+            // Track element type for array bindings and field types for objects.
+            if let Some(t) = ty {
+                if t.is_array {
+                    fctx.set_element_ty(name, from_ast(&t.name, false)?);
+                }
+                if !t.fields.is_empty() {
+                    fctx.set_object_fields(name, &t.fields);
+                }
+            }
             Ok(())
         }
         Stmt::Assign { name, value } => {
@@ -58,8 +66,68 @@ pub(crate) fn emit_stmt(
             fctx.rebind(name, v, builder);
             Ok(())
         }
-        Stmt::AssignIndex { .. } | Stmt::AssignMember { .. } => {
-            Err("indexed/field assignment is not yet supported by the Cranelift backend (Phase 2)".to_string())
+        Stmt::AssignIndex { object, index, value } => {
+            let (obj_val, _) = expr::emit(builder, fctx, &Expr::Ident(object.clone()), runtime, user_fns, module)?;
+            let (idx_val, _) = expr::emit(builder, fctx, index, runtime, user_fns, module)?;
+            let (val_v, val_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
+            let idx_i32 = builder.ins().fcvt_to_sint(I32, idx_val);
+            let i64_val = crate::expr::promote_to_i64(builder, val_v, val_ty);
+            let callee = module.declare_func_in_func(runtime.vec_set, builder.func);
+            builder.ins().call(callee, &[obj_val, idx_i32, i64_val]);
+            fctx.rebind(object, obj_val, builder);
+            Ok(())
+        }
+        Stmt::AssignMember { object, property, value } => {
+            let (obj_val, _) = expr::emit(builder, fctx, object, runtime, user_fns, module)?;
+            let (val_v, val_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
+            let i64_val = crate::expr::promote_to_i64(builder, val_v, val_ty);
+            // The key is a string literal we pass as a handle.
+            let key_bytes: Vec<u8> = {
+                let mut b = Vec::with_capacity(property.len() + 1);
+                b.extend_from_slice(property.as_bytes());
+                b.push(0);
+                b
+            };
+            let key_id = if let Some(&existing) = fctx.string_literals.get(&key_bytes) {
+                existing
+            } else {
+                let mut hash: u64 = 0xcbf29ce484222325;
+                for &b in &key_bytes {
+                    hash = hash.wrapping_mul(0x100000001b3).wrapping_add(b as u64);
+                }
+                let name = format!("arcis_key_{:016x}", hash);
+                let id = if let Some(existing) = module.declarations().get_name(&name) {
+                    match existing {
+                        cranelift_module::FuncOrDataId::Data(did) => did,
+                        _ => return Err(format!("name collision: `{}` is a function", name)),
+                    }
+                } else {
+                    let id = module
+                        .declare_data(&name, Linkage::Local, false, false)
+                        .map_err(|e| format!("declare key data `{}`: {}", name, e))?;
+                    let mut dd = DataDescription::new();
+                    dd.define(key_bytes.clone().into());
+                    dd.set_align(1);
+                    module.define_data(id, &dd).map_err(|e| format!("define key data: {}", e))?;
+                    id
+                };
+                fctx.string_literals.insert(key_bytes.clone(), id);
+                id
+            };
+            let key_gv = module.declare_data_in_func(key_id, builder.func);
+            let key_addr = builder.ins().global_value(I64, key_gv);
+            let key_handle = {
+                let callee_s = module.declare_func_in_func(runtime.string_from_cstr, builder.func);
+                let call_s = builder.ins().call(callee_s, &[key_addr]);
+                builder.inst_results(call_s)[0]
+            };
+            let callee_set = module.declare_func_in_func(runtime.object_set, builder.func);
+            builder.ins().call(callee_set, &[obj_val, key_handle, i64_val]);
+            // Re-bind the object variable if it's an Ident.
+            if let Expr::Ident(name) = object.as_ref() {
+                fctx.rebind(name, obj_val, builder);
+            }
+            Ok(())
         }
         Stmt::Return(value) => {
             if let Some(e) = value {
@@ -79,8 +147,91 @@ pub(crate) fn emit_stmt(
         Stmt::For { init, condition, update, body } => {
             emit_for(builder, fctx, init.as_deref(), condition.as_ref(), update.as_deref(), body, runtime, user_fns, module)
         }
-        Stmt::ForOf { .. } => {
-            Err("`for-of` is not yet supported by the Cranelift backend (Phase 2)".to_string())
+        Stmt::ForOf { name, ty, iterable, body } => {
+            // Lower `for (let name of iterable)` as:
+            //   let __i = 0;
+            //   loop { if __i >= len(iter) → break; name = iter[__i]; body; __i++ }
+            let (arr_val, _) = expr::emit(builder, fctx, iterable, runtime, user_fns, module)?;
+            let len_callee = module.declare_func_in_func(runtime.vec_len, builder.func);
+            let len_call = builder.ins().call(len_callee, &[arr_val]);
+            let len_val = builder.inst_results(len_call)[0]; // i32
+            let len_f64 = builder.ins().fcvt_from_uint(F64, len_val);
+
+            let cond_block = builder.create_block();
+            let body_block = builder.create_block();
+            let after_block = builder.create_block();
+
+            // Index variable: Cranelift SSA Variable for the counter.
+            let idx_type = ArcisType::Number;
+            let zero = builder.ins().f64const(0.0);
+            let one = builder.ins().f64const(1.0);
+            let idx_var = fctx.define("__for_i", idx_type, zero, builder);
+
+            if !is_block_terminated(builder) {
+                builder.ins().jump(cond_block, &[]);
+            }
+
+            builder.switch_to_block(cond_block);
+            let cur_idx = builder.use_var(idx_var);
+            let cmp = builder.ins().fcmp(FloatCC::LessThan, cur_idx, len_f64);
+            builder.ins().brif(cmp, body_block, &[], after_block, &[]);
+
+            builder.switch_to_block(body_block);
+            fctx.push_loop(LoopFrame {
+                continue_target: cond_block,
+                break_target: after_block,
+                after: after_block,
+            });
+
+            // Load element: cur_idx (f64) → i32 → vec_get
+            let cur_idx_v = builder.use_var(idx_var);
+            let idx_i32 = builder.ins().fcvt_to_sint(I32, cur_idx_v);
+            let get_callee = module.declare_func_in_func(runtime.vec_get, builder.func);
+            let get_call = builder.ins().call(get_callee, &[arr_val, idx_i32]);
+            let elem_val = builder.inst_results(get_call)[0];
+            // Infer element type from the array binding if possible.
+            let (elem_cl_val, elem_ty) = if let Expr::Ident(arr_name) = iterable.as_ref() {
+                match fctx.element_ty(arr_name).unwrap_or(ArcisType::Number) {
+                    ArcisType::String => (elem_val, ArcisType::String),
+                    ArcisType::Number => {
+                        let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), elem_val);
+                        (as_f64, ArcisType::Number)
+                    }
+                    ArcisType::Boolean => {
+                        let as_i8 = builder.ins().ireduce(I8, elem_val);
+                        (as_i8, ArcisType::Boolean)
+                    }
+                    // Object, Array, and other handle types: pass as raw I64.
+                    other @ (ArcisType::Object | ArcisType::Array) => (elem_val, other),
+                    other => {
+                        let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), elem_val);
+                        (as_f64, other)
+                    }
+                }
+            } else {
+                let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), elem_val);
+                (as_f64, ArcisType::Number)
+            };
+            fctx.define(name, elem_ty, elem_cl_val, builder);
+
+            for s in body {
+                emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
+            }
+            fctx.pop_loop();
+
+            // Increment counter.
+            let cur = builder.use_var(idx_var);
+            let next = builder.ins().fadd(cur, one);
+            fctx.rebind("__for_i", next, builder);
+            if !is_block_terminated(builder) {
+                builder.ins().jump(cond_block, &[]);
+            }
+            builder.seal_block(cond_block);
+            builder.seal_block(body_block);
+
+            builder.switch_to_block(after_block);
+            builder.seal_block(after_block);
+            Ok(())
         }
         Stmt::Break => {
             let frame = fctx

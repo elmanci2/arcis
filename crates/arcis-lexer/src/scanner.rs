@@ -15,6 +15,21 @@ use crate::error::LexError;
 use crate::state::Lexer;
 use crate::token::TokenKind;
 
+/// A source comment captured by the lexer (line or block). Carries its
+/// 1-based start position and the number of source lines it spans, so
+/// the formatter can interleave it with tokens by position.
+///
+/// `text` is the raw comment source including delimiters (e.g.
+/// `// hello` or `/* hi */`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentToken {
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub text: String,
+    pub is_block: bool,
+}
+
 /// Returns `true` if `c` may start an identifier (letter, `_`, or `$`).
 pub(crate) fn is_ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_' || c == '$'
@@ -57,8 +72,10 @@ pub(crate) fn keywords() -> HashMap<&'static str, TokenKind> {
 }
 
 /// Skip whitespace and `// ...` / `/* ... */` comments, leaving the cursor at
-/// the start of the next real token (or at EOF).
-pub(crate) fn skip_whitespace_and_comments(lx: &mut Lexer) {
+/// the start of the next real token (or at EOF). Any comment encountered is
+/// pushed into `comments` in source order so callers (e.g. the formatter)
+/// can preserve them.
+pub(crate) fn skip_whitespace_and_comments(lx: &mut Lexer, comments: &mut Vec<CommentToken>) {
     loop {
         lx.start_token();
         if lx.is_eof() {
@@ -69,14 +86,26 @@ pub(crate) fn skip_whitespace_and_comments(lx: &mut Lexer) {
                 lx.advance();
             }
             '/' if lx.peek_char_at(1) == Some('/') => {
+                let start_line = lx.line;
+                let start_col = lx.col;
                 while let Some(c) = lx.peek_char() {
                     if c == '\n' {
                         break;
                     }
                     lx.advance();
                 }
+                // Line comment never crosses `\n`, so end_line == start_line.
+                comments.push(CommentToken {
+                    line: start_line,
+                    col: start_col,
+                    end_line: start_line,
+                    text: lx.slice_current(),
+                    is_block: false,
+                });
             }
             '/' if lx.peek_char_at(1) == Some('*') => {
+                let start_line = lx.line;
+                let start_col = lx.col;
                 lx.advance(); // /
                 lx.advance(); // *
                 while let Some(c) = lx.peek_char() {
@@ -87,6 +116,13 @@ pub(crate) fn skip_whitespace_and_comments(lx: &mut Lexer) {
                     }
                     lx.advance();
                 }
+                comments.push(CommentToken {
+                    line: start_line,
+                    col: start_col,
+                    end_line: lx.line,
+                    text: lx.slice_current(),
+                    is_block: true,
+                });
             }
             _ => return,
         }

@@ -103,6 +103,7 @@ type         = "string" | "number" | "boolean" | "void" | IDENT
 | `for (x of arr)`     | ✔                |
 | `break`, `continue`  | ✔                |
 | `print`, `input`     | ✔ (builtins)     |
+| `arcis fmt`          | ✔ Formatter: 2-space indent, semicolons, comments preserved. CLI + LSP. |
 | `sys.*` (filesystem) | ✔ `readFile`/`writeFile`/`readBytes`/`writeBytes`/`appendFile`/`createFile`/`deleteFile`/`deleteDir`/`deleteDirAll`/`mkdir`/`listDir`/`copy`/`move`/`rename` |
 | `sys.*` (path)       | ✔ `exists`/`isFile`/`isDir`/`fileSize`/`fileInfo`/`absolute`/`relative`/`createSymlink`/`readLink` |
 | `sys.*` (proc env)   | ✔ `args`/`currentDir`/`changeDir`/`tempDir`/`homeDir`/`executablePath` |

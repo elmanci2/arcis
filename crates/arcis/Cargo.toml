@@ -13,4 +13,5 @@ path = "src/main.rs"
 
 [dependencies]
 arcis-driver = { workspace = true }
+arcis-fmt = { workspace = true }
 clap = { workspace = true }

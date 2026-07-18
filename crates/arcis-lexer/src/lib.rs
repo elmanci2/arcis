@@ -26,17 +26,24 @@ mod token;
 pub use crate::token::{Token, TokenKind};
 
 pub use crate::error::LexError;
+pub use crate::scanner::CommentToken;
 
 use crate::state::Lexer;
 
 /// Lex `source` into a complete token stream (always terminated with
-/// `TokenKind::Eof`).
-pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
+/// `TokenKind::Eof`) **and** the list of comments encountered, in source
+/// order. The parser ignores comments; this variant exists so the
+/// formatter (and other tools that care about comments) can preserve
+/// them.
+pub fn lex_with_comments(
+    source: &str,
+) -> Result<(Vec<Token>, Vec<CommentToken>), LexError> {
     let mut lx = Lexer::new(source);
     let mut tokens = Vec::new();
+    let mut comments = Vec::new();
 
     loop {
-        scanner::skip_whitespace_and_comments(&mut lx);
+        scanner::skip_whitespace_and_comments(&mut lx, &mut comments);
         if lx.is_eof() {
             tokens.push(Token {
                 kind: TokenKind::Eof,
@@ -44,7 +51,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 line: lx.line,
                 col: lx.col,
             });
-            return Ok(tokens);
+            return Ok((tokens, comments));
         }
 
         let line = lx.line;
@@ -64,6 +71,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         let lexeme = lx.slice_current();
         tokens.push(Token { kind, lexeme, line, col });
     }
+}
+
+/// Lex `source` into a complete token stream (always terminated with
+/// `TokenKind::Eof`). Comments are discarded — use [`lex_with_comments`]
+/// if you need them.
+pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
+    let (tokens, _comments) = lex_with_comments(source)?;
+    Ok(tokens)
 }
 
 #[cfg(test)]

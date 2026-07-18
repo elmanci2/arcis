@@ -4,6 +4,7 @@
   "description": "Sintaxis y Language Server para archivos .tsr (Arcis → Rust).",
   "version": "0.3.0",
   "publisher": "local",
+  "icon": "assets/logo.svg",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -32,6 +33,13 @@
         "language": "arcis",
         "scopeName": "source.arcis",
         "path": "./syntaxes/arcis.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "arcis",
+        "label": "Arcis",
+        "path": "./icons/arcis-icon-theme.json"
       }
     ]
   },

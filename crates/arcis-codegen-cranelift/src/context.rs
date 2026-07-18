@@ -43,6 +43,10 @@ pub(crate) struct FunctionCtx {
     currents: HashMap<String, Value>,
     /// The declared Arcis type of each binding.
     types: HashMap<String, ArcisType>,
+    /// For array bindings: the ArcisType of each element.
+    element_types: HashMap<String, ArcisType>,
+    /// For object bindings: field-name → ArcisType maps, keyed by variable name.
+    object_field_types: HashMap<String, HashMap<String, ArcisType>>,
     /// Names that the pre-pass flagged as reassigned. Reserved for future
     /// use (e.g. marking runtime allocations as mutable).
     #[allow(dead_code)]
@@ -64,6 +68,8 @@ impl FunctionCtx {
             vars: HashMap::new(),
             currents: HashMap::new(),
             types: HashMap::new(),
+            element_types: HashMap::new(),
+            object_field_types: HashMap::new(),
             reassigned: reassigned.clone(),
             loops: Vec::new(),
             string_literals: HashMap::new(),
@@ -97,6 +103,32 @@ impl FunctionCtx {
 
     pub fn ty(&self, name: &str) -> Option<ArcisType> {
         self.types.get(name).copied()
+    }
+
+    /// The element type of an array binding (or None if not an array).
+    pub(crate) fn element_ty(&self, name: &str) -> Option<ArcisType> {
+        self.element_types.get(name).copied()
+    }
+
+    /// Set the element type for an array binding.
+    pub(crate) fn set_element_ty(&mut self, name: &str, elem_ty: ArcisType) {
+        self.element_types.insert(name.to_string(), elem_ty);
+    }
+
+    /// Register an object's field types from its Type annotation.
+    pub(crate) fn set_object_fields(&mut self, name: &str, fields: &[(String, Box<arcis_ast::Type>)]) {
+        let mut map = HashMap::new();
+        for (fname, fty) in fields {
+            if let Ok(at) = crate::types::from_ast(&fty.name, fty.is_array) {
+                map.insert(fname.clone(), at);
+            }
+        }
+        self.object_field_types.insert(name.to_string(), map);
+    }
+
+    /// Look up the ArcisType of an object's field.
+    pub(crate) fn object_field_ty(&self, obj_name: &str, field_name: &str) -> Option<ArcisType> {
+        self.object_field_types.get(obj_name)?.get(field_name).copied()
     }
 
     pub fn rebind(&mut self, name: &str, value: Value, builder: &mut cranelift_frontend::FunctionBuilder<'_>) {

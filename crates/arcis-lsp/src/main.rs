@@ -11,7 +11,7 @@ use async_lsp::MainLoop;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let (server, _) =
-        MainLoop::new_server(|client| arcis_lsp::server::build_service(client));
+        MainLoop::new_server(|client| arcis_lsp::server::build(client));
 
     // On Unix, async-lsp's PipeStdin/PipeStdout are truly async. On
     // other platforms the binary panics at startup; that is fine for

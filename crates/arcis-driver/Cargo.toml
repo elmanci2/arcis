@@ -10,5 +10,7 @@ description = "Arcis driver: orchestrates the compilation pipeline, invokes rust
 [dependencies]
 arcis-ast = { workspace = true }
 arcis-codegen = { workspace = true }
+arcis-codegen-cranelift = { workspace = true }
 arcis-linker = { workspace = true }
 arcis-validation = { workspace = true }
+target-lexicon = "0.12"

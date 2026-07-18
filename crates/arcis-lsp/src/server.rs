@@ -4,24 +4,27 @@
 //!
 //! Two public entry points:
 //!
-//! - [`new_server`] builds a `ServerState`-backed `Router` and layers
-//!   the standard middlewares (tracing, panic-catch, lifecycle).
-//!   `main.rs` calls this and hands the result to
-//!   `MainLoop::new_server`.
+//! - [`build`] builds a `ServerState`-backed `Router` and hands it
+//!   to `MainLoop::new_server` in `main.rs`.
 //!
-//! State is held in [`ServerState`], which keeps a clone of the
-//! [`ClientSocket`] so handlers can publish diagnostics and
-//! notifications back to the editor.
+//! State is held in [`ServerState`], which carries a [`DocumentStore`]
+//! (text per URI) and a clone of the [`ClientSocket`] for publishing
+//! diagnostics. Keeping the per-document text in the state lets
+//! `completion` compute the prefix *up to the cursor* — without it,
+//! the LSP can't tell `sys.|` from `|sys` and completion degenerates
+//! to "all top-level builtins".
 
+use std::collections::HashMap;
 use std::ops::ControlFlow;
 
 use async_lsp::lsp_types::{
     notification, request, CompletionItem, CompletionList, CompletionOptions,
-    CompletionResponse, CompletionTextEdit, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, Hover, HoverContents, HoverProviderCapability,
-    InitializeResult, MarkupContent, MarkupKind, OneOf, PublishDiagnosticsParams,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit,
+    CompletionResponse, CompletionTextEdit, CompletionParams, Diagnostic,
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents,
+    HoverProviderCapability, InitializeResult, MarkupContent, MarkupKind, OneOf,
+    Position, PublishDiagnosticsParams, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextEdit, Url,
 };
 use async_lsp::router::Router;
 use async_lsp::{ClientSocket, LanguageClient};
@@ -29,22 +32,43 @@ use async_lsp::{ClientSocket, LanguageClient};
 use crate::completion::completions_at;
 use crate::diagnostics::diagnostics_for;
 
-/// State held by every request handler. Just the LSP client socket so
-/// we can publish diagnostics back to the editor.
+/// Per-URI in-memory text store. Updated by `didOpen` and `didChange`;
+/// read by `completion` to compute the cursor prefix.
+#[derive(Default)]
+pub struct DocumentStore {
+    docs: HashMap<Url, String>,
+}
+
+impl DocumentStore {
+    /// Insert or replace the document text for `uri`.
+    fn upsert(&mut self, uri: Url, text: String) {
+        self.docs.insert(uri, text);
+    }
+
+    /// Read the document text for `uri` if known.
+    fn get(&self, uri: &Url) -> Option<&str> {
+        self.docs.get(uri).map(String::as_str)
+    }
+}
+
+/// State held by every request handler.
 pub struct ServerState {
     pub client: ClientSocket,
+    pub docs: DocumentStore,
 }
 
 impl ServerState {
     fn new(client: ClientSocket) -> Self {
-        Self { client }
+        Self {
+            client,
+            docs: DocumentStore::default(),
+        }
     }
 }
 
 /// Build the `ServerState`-backed `Router` with every request and
-/// notification handler we care about. Layered through the standard
-/// middlewares so panics become errors and shutdown is graceful.
-pub fn new_server(client: ClientSocket) -> Router<ServerState> {
+/// notification handler we care about.
+pub fn build(client: ClientSocket) -> Router<ServerState> {
     let mut router = Router::new(ServerState::new(client));
 
     router
@@ -78,53 +102,83 @@ pub fn new_server(client: ClientSocket) -> Router<ServerState> {
         })
         .request::<request::Shutdown, _>(|_, _| async move { Ok(()) })
         // ── Completion ────────────────────────────────────────────
-        .request::<request::Completion, _>(|_, _params| async move {
-            // The completion request doesn't carry the document text;
-            // the editor maintains the buffer. For the MVP we serve
-            // whatever the builtin table can produce with a blank
-            // prefix so the panel always has items (keywords +
-            // globals). The editor's "fetch completion on trigger"
-            // path will repopulate with context after didChange.
-            let items: Vec<CompletionItem> = completions_at("");
-            Ok(Some(CompletionResponse::List(CompletionList {
-                is_incomplete: false,
-                items,
-            })))
+        .request::<request::Completion, _>(|state, params| {
+            let uri = params.text_document_position.text_document.uri;
+            let pos = params.text_document_position.position;
+            let prefix = state
+                .docs
+                .get(&uri)
+                .map(|text| prefix_up_to(text, pos))
+                .unwrap_or_default();
+            let items: Vec<CompletionItem> = completions_at(&prefix);
+            async move {
+                Ok(Some(CompletionResponse::List(CompletionList {
+                    is_incomplete: false,
+                    items,
+                })))
+            }
         })
         // ── Document-changed notifications ────────────────────────
-        .notification::<notification::DidOpenTextDocument>(notify_open)
-        .notification::<notification::DidChangeTextDocument>(notify_change)
+        .notification::<notification::Initialized>(|_state, _params| {
+            ControlFlow::Continue(())
+        })
+        .notification::<notification::DidOpenTextDocument>(on_did_open)
+        .notification::<notification::DidChangeTextDocument>(on_did_change)
         .notification::<notification::DidCloseTextDocument>(|_state, _params| {
             ControlFlow::Continue(())
-        });
+        })
+        // `exit` notification: break the main loop so the process
+        // terminates cleanly.
+        .notification::<notification::Exit>(|_, _| ControlFlow::Break(Ok(())));
     router
 }
 
-/// `didOpen` notification handler: pull the inline text out of the
-/// params, run diagnostics, publish.
-fn notify_open(
+/// Handle `textDocument/completion`. Reads the stored document text
+/// for the URI, computes the prefix up to the cursor, and serves the
+/// appropriate slice of the builtin table.
+fn on_completion(
+    state: &mut ServerState,
+    params: CompletionParams,
+) -> async_lsp::Result<Option<CompletionResponse>> {
+    let uri = &params.text_document_position.text_document.uri;
+    let pos = params.text_document_position.position;
+    let prefix = state
+        .docs
+        .get(uri)
+        .map(|text| prefix_up_to(text, pos))
+        .unwrap_or_default();
+    let items: Vec<CompletionItem> = completions_at(&prefix);
+    Ok(Some(CompletionResponse::List(CompletionList {
+        is_incomplete: false,
+        items,
+    })))
+}
+
+/// `didOpen`: store the document text + publish diagnostics.
+fn on_did_open(
     state: &mut ServerState,
     params: DidOpenTextDocumentParams,
 ) -> ControlFlow<async_lsp::Result<()>> {
-    let uri = params.text_document.uri;
-    let text = params.text_document.text;
+    let uri = params.text_document.uri.clone();
+    let text = params.text_document.text.clone();
+    state.docs.upsert(uri.clone(), text.clone());
     publish_diagnostics(&state.client, &uri, &text);
     ControlFlow::Continue(())
 }
 
-/// `didChange` notification handler: read the most recent full content
-/// change, run diagnostics, publish.
-fn notify_change(
+/// `didChange`: store the most recent full text + publish diagnostics.
+fn on_did_change(
     state: &mut ServerState,
     params: DidChangeTextDocumentParams,
 ) -> ControlFlow<async_lsp::Result<()>> {
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.clone();
     let text = params
         .content_changes
         .into_iter()
         .last()
         .map(|c| c.text)
         .unwrap_or_default();
+    state.docs.upsert(uri.clone(), text.clone());
     publish_diagnostics(&state.client, &uri, &text);
     ControlFlow::Continue(())
 }
@@ -145,14 +199,22 @@ fn publish_diagnostics(
     });
 }
 
-/// Build the final `LspService`. For the MVP we skip the standard
-/// tower middlewares (Tracing / Lifecycle / CatchUnwind / Concurrency
-/// / ClientProcessMonitor) — they're not strictly required for
-/// completion + hover + diagnostics, and routing through them requires
-/// an `Error` type that converts into `ResponseError`. We can layer
-/// them in later once the MVP is proven.
-pub fn build_service(client: ClientSocket) -> Router<ServerState> {
-    new_server(client)
+/// Build the prefix (text up to the cursor) given the full document
+/// text and an LSP `Position` (0-indexed line + character). Exposed
+/// for testing in `tests/completion.rs`.
+pub fn prefix_up_to(text: &str, pos: Position) -> String {
+    let mut cur_line: u32 = 0;
+    for line in text.split_inclusive('\n') {
+        if cur_line == pos.line {
+            // `line` includes the trailing '\n'; drop it before slicing.
+            let line_no_nl = line.strip_suffix('\n').unwrap_or(line);
+            let chars: String = line_no_nl.chars().take(pos.character as usize).collect();
+            return chars;
+        }
+        cur_line += 1;
+    }
+    // Cursor is past the end of the document — return the whole thing.
+    text.to_string()
 }
 
 // Suppress unused-imports noise from the LSP / async-lsp scaffolding.

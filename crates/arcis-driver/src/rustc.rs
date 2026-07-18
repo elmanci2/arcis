@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 
 /// Build, then return the path of the produced binary.
 pub(crate) fn compile(input: &Path) -> Result<PathBuf, String> {
-    let out = super::build::run(input)?;
+    let out = super::build::run(input, super::Backend::Rust)?;
     if let Some(cargo_dir) = &out.cargo_dir {
         compile_with_cargo(cargo_dir, out.pkg_name.as_deref().unwrap_or("arcis-app"))
     } else {
@@ -24,7 +24,7 @@ pub(crate) fn compile(input: &Path) -> Result<PathBuf, String> {
 /// Build, then execute the binary. The exit status of the binary is
 /// forwarded to the caller.
 pub(crate) fn run(input: &Path) -> Result<(), String> {
-    let out = super::build::run(input)?;
+    let out = super::build::run(input, super::Backend::Rust)?;
     if let Some(cargo_dir) = &out.cargo_dir {
         run_with_cargo(cargo_dir)
     } else {

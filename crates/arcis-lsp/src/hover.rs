@@ -76,31 +76,24 @@ fn c_len_after(s: &str, i: usize) -> usize {
 /// If the cursor is on a chain like `sys.readFile`, return the whole
 /// `sys.readFile` label.
 fn chain_label_at(before: &str, after: &str) -> Option<String> {
-    // Walk back from the cursor collecting `.ident` segments left-to-right.
-    // We start at `partial_end` (the position just after any trailing
-    // ident the cursor is on) and walk left.
-    let mut cut = before.len();
-    while cut > 0 && is_ident_cont(before[cut - 1..].chars().next()?) {
-        cut -= 1;
-    }
-    let partial_end = cut;
-    if partial_end == before.len() && after.is_empty() {
-        return None;
-    }
-
     // We accumulate segments left-to-right and join with `.`.
     let mut segments: Vec<&str> = Vec::new();
 
-    // First segment: between cut and partial_end (if any).
-    if partial_end > cut {
+    // 1. The partial identifier that crosses the cursor. `partial_end`
+    //    is the position right after any trailing ident chars in
+    //    `before`; `cut` is the position of the ident's start.
+    let mut cut = before.len();
+    let partial_end = cut;
+    while cut > 0 && is_ident_cont(before[cut - 1..].chars().next()?) {
+        cut -= 1;
+    }
+    if cut < partial_end {
         segments.push(&before[cut..partial_end]);
     }
 
-    // Walk back through `.ident` segments.
+    // 2. Walk back through `.ident` segments.
     while cut > 0 && before.as_bytes().get(cut - 1) == Some(&b'.') {
-        // Skip the dot.
-        cut -= 1;
-        // Read identifier backwards.
+        cut -= 1; // skip the dot
         let id_end = cut;
         while cut > 0 {
             let prev = before[..cut].chars().rev().next()?;
@@ -116,10 +109,10 @@ fn chain_label_at(before: &str, after: &str) -> Option<String> {
         segments.push(&before[cut..id_end]);
     }
 
-    // Now `segments` is in reverse order; reverse to get left-to-right.
+    // `segments` is in reverse order; reverse to get left-to-right.
     segments.reverse();
 
-    // Plus the trailing identifier part if the cursor is mid-identifier.
+    // 3. Append the suffix (the leading identifier of `after`, if any).
     let suffix_end = after
         .char_indices()
         .take_while(|(_, c)| is_ident_cont(*c))

@@ -71,6 +71,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variables, OS info, memory, CPU, GPU, disk, and network. The script
   is self-cleaning (deletes its temp dir on exit) and idempotent
   (re-running cleans up before recreating).
+- New crate `arcis-lsp` providing a Language Server for `.tsr`
+  files. Implements completion (keywords, primitive types, ~50
+  `sys.*` builtins, sub-namespace methods, array/string methods),
+  hover (signature + documentation), and diagnostics (lexer + parser
+  errors). Built on `async-lsp` 0.2; the `tower-lsp` and
+  `tower-lsp-f` crates fail to compile on Rust 1.93. The binary
+  installs to `~/.cargo/bin/arcis-lsp` via
+  `cargo install --path crates/arcis-lsp --force`.
+- VS Code extension upgraded to v0.3.0: now bundles a TypeScript
+  LSP client (`src/extension.ts`) that launches `arcis-lsp` as a
+  child process via `vscode-languageclient`. Trigger characters for
+  completion are `.` and `:`. `editor/install-vscode.sh` now
+  runs `npm install` + `tsc` to build the client.
 - Split `sys` codegen into three submodules under
   `crates/arcis-codegen/src/sys/`: `fs` (file/dir IO), `path` (path
   queries) and `env` (process / environment). Each submodule exposes a

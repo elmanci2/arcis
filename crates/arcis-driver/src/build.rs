@@ -1,11 +1,14 @@
 //! Build pipeline: link → validate → codegen → write to disk.
 //!
-//! Two output layouts are supported, decided by whether the entry's
-//! directory has a `Cargo.toml` beside it:
+//! Two output layouts are supported for the Rust backend, decided by
+//! whether the entry's directory has a `Cargo.toml` beside it:
 //!
 //! - **Direct rustc**: write `<id>.rs` files directly under `bin/`.
 //! - **Cargo project**: write `bin/<pkg>/Cargo.toml` + `bin/<pkg>/src/<id>.rs`
 //!   for use with `cargo build`.
+//!
+//! The Cranelift backend always writes object files directly to `bin/`
+//! (one `.o` per module + `arcis_runtime.o` + `arcis_runtime.c`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,9 +16,9 @@ use std::path::{Path, PathBuf};
 use arcis_ast::Stmt;
 use arcis_linker::Module;
 
-/// Run the full pipeline: resolve modules, validate them, generate Rust
-/// sources, and write the `.rs` files to disk.
-pub(crate) fn run(input: &Path) -> Result<super::BuildOutput, String> {
+/// Run the full pipeline: resolve modules, validate them, generate sources
+/// for the chosen backend, and write them to disk.
+pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildOutput, String> {
     let modules = arcis_linker::resolve(input)?;
 
     for m in &modules {
@@ -28,30 +31,54 @@ pub(crate) fn run(input: &Path) -> Result<super::BuildOutput, String> {
         }
     }
 
-    let generated = arcis_codegen::generate_all(&modules)?;
-
     let bin_dir = PathBuf::from("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("could not create `bin/`: {}", e))?;
-
     let root_id = modules[0].id.clone();
-    let entry_dir = modules[0].path.parent().ok_or_else(|| {
-        format!(
-            "could not determine the directory of `{}`",
-            modules[0].path.display()
-        )
-    })?;
-    let user_cargo_toml = entry_dir.join("Cargo.toml");
 
-    if user_cargo_toml.exists() {
-        Ok(write_cargo_layout(
-            &modules,
-            &generated,
-            &bin_dir,
-            &user_cargo_toml,
-            &root_id,
-        )?)
-    } else {
-        write_rustc_layout(&modules, &generated, &bin_dir, &root_id)
+    match backend {
+        super::Backend::Rust => {
+            let generated = arcis_codegen::generate_all(&modules)?;
+            let entry_dir = modules[0].path.parent().ok_or_else(|| {
+                format!(
+                    "could not determine the directory of `{}`",
+                    modules[0].path.display()
+                )
+            })?;
+            let user_cargo_toml = entry_dir.join("Cargo.toml");
+
+            if user_cargo_toml.exists() {
+                Ok(write_cargo_layout(
+                    &modules,
+                    &generated,
+                    &bin_dir,
+                    &user_cargo_toml,
+                    &root_id,
+                )?)
+            } else {
+                write_rustc_layout(&modules, &generated, &bin_dir, &root_id)
+            }
+        }
+        super::Backend::Cranelift => {
+            let triple = target_lexicon::Triple::host();
+            arcis_codegen_cranelift::compile_to_object(&modules, &bin_dir, &triple)?;
+            // Write the runtime source alongside so the linker step can
+            // also use `cc` on it.
+            let runtime_c_path = bin_dir.join("arcis_runtime.c");
+            fs::write(
+                &runtime_c_path,
+                arcis_codegen_cranelift::runtime::RUNTIME_C_SOURCE,
+            )
+            .map_err(|e| {
+                format!("could not write `{}`: {}", runtime_c_path.display(), e)
+            })?;
+            Ok(super::BuildOutput {
+                sources: Vec::new(),
+                root_id,
+                cargo_dir: None,
+                pkg_name: None,
+                backend: super::Backend::Cranelift,
+            })
+        }
     }
 }
 
@@ -128,6 +155,7 @@ fn write_cargo_layout(
         root_id: root_id.to_string(),
         cargo_dir: Some(target_dir),
         pkg_name: Some(pkg_name),
+        backend: super::Backend::Rust,
     })
 }
 
@@ -158,6 +186,7 @@ fn write_rustc_layout(
         root_id: root_id.to_string(),
         cargo_dir: None,
         pkg_name: None,
+        backend: super::Backend::Rust,
     })
 }
 

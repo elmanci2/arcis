@@ -68,12 +68,40 @@ arcis run
 To uninstall: `cargo uninstall arcis` or `rm ~/.cargo/bin/arcis`.
 To update after changes: `cargo install --path . --force`.
 
+## Backends
+
+`arcis` ships with **two** compiler backends, selectable per command via the
+`--backend` flag. The default is the original Rust backend; passing
+`--backend cranelift` switches to a Cranelift-based native code generator
+that does **not** depend on a Rust toolchain at runtime.
+
+| Backend    | Toolchain needed at runtime                | Library dependencies at runtime          | Default |
+|------------|--------------------------------------------|-----------------------------------------|---------|
+| `rust`     | `rustc` / `cargo`                          | Rust `std`                              | ✓       |
+| `cranelift`| only `cc` (gcc, clang, …)                  | libc                                    |         |
+
+```bash
+arcis build --backend rust      examples/01-hello/hello.tsr
+arcis build --backend cranelift examples/01-hello/hello.tsr
+
+# After install, an Arcis user without Rust installed can run:
+arcis build --backend cranelift my-project/
+./bin/my-project
+```
+
+The Cranelift backend is feature-parallel to the Rust one in scope: it
+covers everything in "Supported subset" for Phase 1 except arrays,
+methods, objects, modules and `sys.*`. See
+[`crates/arcis-codegen-cranelift/`](crates/arcis-codegen-cranelift/) for
+the implementation and the upstream plan at
+`~/.claude/plans/imperative-seeking-cerf.md` (Phases 2–6) for the rest.
+
 ## Supported subset
 
 - `let` / `const` with optional type annotation
 - Primitive types: `string`, `number`, `boolean`, `void`
 - `function name(p: T, ...): T { ... }` with `return`
-- `if (cond) { ... } else { ... }`, `while`, `for`, `for (let x of arr)`, `break`, `continue`
+- `if (cond) { ... } else if (...) { ... } else { ... }`, `while`, `for (init; cond; upd)`, `break`, `continue`
 - `print(expr);` (shorthand for `println!`)
 - Literals: `"string"`, `42`, `3.14`, `true`, `false`, `[...]`, `{ key: value }`
 - Inline object types: `let p: { name: string, age: number } = ...`
@@ -81,6 +109,9 @@ To update after changes: `cargo install --path . --force`.
 - Operators: `+ - * / % == != < > <= >= && || !`
 - Comments `//` and `/* ... */`
 - **Modules**: `import`/`export` with TypeScript syntax (see [Modules](#modules))
+- Note: `for (let x of arr)`, `arr.length`, and the array methods
+  (`push`/`pop`/`find`/`filter`/`map`/…) are listed above for completeness
+  but are not yet supported by the Cranelift backend (Phase 2+).
 
 ## Example
 

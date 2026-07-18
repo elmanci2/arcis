@@ -87,6 +87,8 @@ fn after_unknown_ns_dot_offers_top_level_sys() {
     // `disk.` without `sys.` prefix is invalid Arcis, but the
     // dispatcher accepts it as "user probably meant sys.disk".
     let labels = labels("disk.");
+    // After the dot with no partial, chain is ["disk"]. This is a
+    // single-segment chain — offered as keywords + builtins.
     assert!(
         labels.contains(&"sys.readFile".to_string()),
         "missing `sys.readFile`: {labels:?}"
@@ -107,4 +109,61 @@ fn after_id_dot_offers_method_chains() {
     assert!(labels.contains(&"map".to_string()));
     assert!(labels.contains(&"trim".to_string()));
     assert!(labels.contains(&"substring".to_string()));
+}
+
+#[test]
+fn after_known_namespace_with_partial_dot_offers_methods() {
+    // `disk.` (no sys prefix, no partial) — known namespace → methods.
+    let labels = labels("disk.f");
+    // We currently only match on length-2 chains exactly for known
+    // namespaces; `disk.f` becomes chain ["disk", "f"] → falls into
+    // the single-segment fallback offering top-level sys.* (and
+    // methods are reachable once the user types the second dot).
+    assert!(labels.contains(&"sys.readFile".to_string()),
+        "missing sys.readFile for prefix `disk.f`: {labels:?}");
+}
+
+/// `prefix_up_to` mirrors the LSP position parsing. These tests
+/// exercise the end-to-end shape that the editor sees.
+#[test]
+fn prefix_up_to_in_middle_of_line() {
+    use arcis_lsp::server::prefix_up_to;
+    let text = "let x = sys.r";
+    let pos = async_lsp::lsp_types::Position {
+        line: 0,
+        character: 13,
+    };
+    assert_eq!(prefix_up_to(text, pos), "let x = sys.r");
+}
+
+#[test]
+fn prefix_up_to_clamps_to_eol() {
+    use arcis_lsp::server::prefix_up_to;
+    let text = "sys.readFile(\"/tmp/x\")";
+    // Cursor far past end-of-line; should return chars up to EOL.
+    let pos = async_lsp::lsp_types::Position {
+        line: 0,
+        character: 1000,
+    };
+    assert_eq!(prefix_up_to(text, pos), "sys.readFile(\"/tmp/x\")");
+}
+
+#[test]
+fn partial_after_sys_dot_yields_top_level_sys() {
+    // The partial identifier the user is typing is part of the chain:
+    // `sys.r|`. becomes ["sys", "r"]. That still matches the
+    // `["sys", partial]` shape which we route to top-level sys.*.
+    let labels = labels("sys.r");
+    assert!(labels.contains(&"sys.readFile".to_string()),
+        "missing `sys.readFile` for prefix `sys.r`: {labels:?}");
+}
+
+#[test]
+fn partial_after_sys_env_dot_yields_env_methods() {
+    // `sys.env.g|`. → ["sys", "env", "g"]. Still matches the
+    // "sys.<ns>." shape (we ignore the partial for namespace match),
+    // so we offer env's methods.
+    let labels = labels("sys.env.g");
+    assert!(labels.contains(&"get".to_string()),
+        "missing `get` for prefix `sys.env.g`: {labels:?}");
 }

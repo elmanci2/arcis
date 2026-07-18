@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "outDir": "./out",
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022"]
+  },
+  "include": ["src"]
+}

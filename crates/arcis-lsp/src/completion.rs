@@ -54,21 +54,39 @@ fn to_item(b: &Builtin) -> CompletionItem {
     }
 }
 
-/// Walk back from the cursor collecting the `.<identifier>` chain.
-/// Returns the chain in left-to-right order (closest-to-cursor
-/// segment first). Empty if the character before the cursor is not
-/// `.` or `<identifier>`.
-fn chain_before_cursor(text: &str) -> Vec<String> {
+/// Walk back from the cursor collecting the `.ident` chain.
+/// Returns `(segments, partial)` where:
+///
+/// - `segments` is the chain of fully-typed identifiers in
+///   left-to-right order. Always ends at a `.` (or is empty).
+/// - `partial` is the partial identifier the user is currently
+///   typing after the last `.` (or at the start of the line).
+///
+/// Examples:
+///
+/// - `"pri"`             → `([], Some("pri"))`
+/// - `"myvar."`          → `(["myvar"], None)`
+/// - `"sys."`            → `(["sys"], None)`
+/// - `"sys.re"`          → `(["sys"], Some("re"))`
+/// - `"sys.env.g"`       → `(["sys", "env"], Some("g"))`
+fn chain_before_cursor(text: &str) -> (Vec<String>, Option<String>) {
     let mut rev_chain = Vec::new();
     let bytes = text.as_bytes();
     let mut i = bytes.len();
 
-    // Skip any trailing identifier chars (the partial token the
-    // user is typing).
+    // 1. Walk back through the trailing identifier (the partial
+    //    token the user is typing).
+    let partial_start = i;
     while i > 0 && is_ident_cont(bytes[i - 1]) {
         i -= 1;
     }
+    let partial = if i < partial_start {
+        Some(text[i..partial_start].to_string())
+    } else {
+        None
+    };
 
+    // 2. Walk back through `.ident` segments.
     while i > 0 {
         if bytes[i - 1] == b'.' {
             i -= 1;
@@ -85,10 +103,8 @@ fn chain_before_cursor(text: &str) -> Vec<String> {
         }
     }
 
-    // Reverse to get left-to-right order: e.g. for `sys.env.` the
-    // collector saw `env`, `sys`, and we want `sys`, `env`.
     rev_chain.reverse();
-    rev_chain
+    (rev_chain, partial)
 }
 
 fn is_ident_start(b: u8) -> bool {
@@ -100,37 +116,44 @@ fn is_ident_cont(b: u8) -> bool {
 
 /// Compute the completion items to offer at the given cursor.
 pub fn completions_at(text_before_cursor: &str) -> Vec<CompletionItem> {
-    let chain = chain_before_cursor(text_before_cursor);
+    let (chain, partial) = chain_before_cursor(text_before_cursor);
     // Convert to `Vec<&str>` so we can match against string literals.
     let chain: Vec<&str> = chain.iter().map(String::as_str).collect();
+    // Drop the partial from the chain view — we only match on the
+    // already-typed segments. The partial itself doesn't change
+    // which slice of the table to serve; it just means the user is
+    // mid-typing and the editor will filter by `filterText` anyway.
+    let _ = partial;
 
     match chain.as_slice() {
-        // Bare identifier or empty → keywords + print/input + sys.* top-level.
+        // Empty chain (cursor at start, or just after `.`, or just
+        // mid-typing a bare ident) → keywords + print/input + sys.*
+        // top-level.
         [] => {
             let mut v: Vec<&Builtin> = builtins::KEYWORDS.iter().collect();
             v.extend(builtins::TOP_LEVEL_BUILTINS.iter());
             v.iter().map(|b| to_item(b)).collect()
         }
-        // `sys.` → namespaces + top-level sys.*.
+        // `sys` (with or without trailing `.`) → namespaces + top-level
+        // sys.* builtins.
         ["sys"] => {
             let mut v: Vec<&Builtin> = builtins::SYS_NAMESPACES.iter().collect();
             v.extend(builtins::TOP_LEVEL_BUILTINS.iter());
             v.iter().map(|b| to_item(b)).collect()
         }
-        // `sys.<ns>.` → methods of <ns>.
-        ["sys", ns] => builtins::ns_methods(ns)
+        // `sys.<ns>` (with or without trailing `.`) → methods of <ns>.
+        ["sys", ns] if is_known_ns(ns) => builtins::ns_methods(ns)
             .iter()
             .map(|b| to_item(b))
             .collect(),
-        // `<known-ns>.` (without `sys` prefix) — offer top-level sys.*
-        // since `disk.foo` is invalid; the user probably meant
-        // `sys.disk.foo`.
+        // `<known-ns>` (no `sys` prefix, no trailing `.`) — typo
+        // recovery: offer top-level sys.* builtins.
         [ns] if is_known_ns(ns) => builtins::TOP_LEVEL_BUILTINS
             .iter()
             .map(|b| to_item(b))
             .collect(),
-        // `<id>.` (some other identifier, possibly a variable) →
-        // array + string methods.
+        // `<id>.` — user typed an identifier followed by `.`; offer
+        // array + string method chains.
         [_] => {
             let mut v: Vec<&Builtin> =
                 builtins::ARRAY_METHODS.iter().collect();

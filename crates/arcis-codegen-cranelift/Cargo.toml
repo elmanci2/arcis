@@ -1,0 +1,21 @@
+[package]
+name = "arcis-codegen-cranelift"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Arcis code generator: AST → native object files via Cranelift (no rustc required)."
+
+[dependencies]
+arcis-ast = { workspace = true }
+arcis-linker = { workspace = true }
+cranelift-codegen = "0.102"
+cranelift-frontend = "0.102"
+cranelift-module = "0.102"
+cranelift-object = "0.102"
+target-lexicon = "0.12"
+
+[dev-dependencies]
+arcis-lexer = { workspace = true }
+arcis-parser = { workspace = true }

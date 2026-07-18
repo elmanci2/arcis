@@ -1,18 +1,22 @@
 {
   "name": "arcis",
   "displayName": "Arcis",
-  "description": "Sintaxis para archivos .tsr (clon de TypeScript compilado a Rust)",
-  "version": "0.2.0",
+  "description": "Sintaxis y Language Server para archivos .tsr (Arcis → Rust).",
+  "version": "0.3.0",
   "publisher": "local",
   "engines": {
     "vscode": "^1.60.0"
   },
   "categories": ["Programming Languages"],
-  "keywords": ["arcis", "typescript", "tsr", "language"],
+  "keywords": ["arcis", "typescript", "tsr", "language", "lsp"],
+  "activationEvents": ["onLanguage:arcis"],
+  "main": "./out/extension.js",
   "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -watch -p .",
     "package": "vsce package",
-    "install:local": "vsce package && code --install-extension arcis-0.2.0.vsix",
-    "install:dev": "rm -rf ~/.vscode/extensions/arcis-0.2.0 && cp -r . ~/.vscode/extensions/arcis-0.2.0"
+    "install:local": "vsce package && code --install-extension arcis-0.3.0.vsix",
+    "install:dev": "rm -rf ~/.vscode/extensions/arcis-0.3.0 && cp -r . ~/.vscode/extensions/arcis-0.3.0"
   },
   "contributes": {
     "languages": [
@@ -30,5 +34,12 @@
         "path": "./syntaxes/arcis.tmLanguage.json"
       }
     ]
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/vscode": "^1.85.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
   }
 }

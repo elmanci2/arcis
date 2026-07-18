@@ -1,6 +1,7 @@
 # Build artifacts
 target/
-
+#node-modules/
+node_modules/
 # Generated Rust source files (.tsr → .rs intermediates) and compiled binaries
 # produced by `arcis build`. We keep the `bin/` directory in the repo layout,
 # but its *contents* are build output and must not be tracked.

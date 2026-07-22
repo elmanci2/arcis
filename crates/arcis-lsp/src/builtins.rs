@@ -134,11 +134,47 @@ pub static KEYWORDS: &[Builtin] = &[
         detail: "primitive type: unit `()`",
         documentation: "Maps to `()` in the emitted Rust.",
     },
+    Builtin {
+        label: "import",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "import a module as a namespace",
+        documentation: "`import utils;` imports the module `utils.tsr` as a namespace.\n\n`import utils as u;` imports with an alias.\n\n`import os.path;` imports a nested module.",
+    },
+    Builtin {
+        label: "from",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "import specific names from a module",
+        documentation: "`from utils import add, sub;` imports specific names.\n\n`from utils import add as suma;` imports with aliases.\n\n`from utils import *;` imports everything.",
+    },
+    Builtin {
+        label: "export",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "export a declaration from the current module",
+        documentation: "`export function f() {}` / `export const X = ...;` exports inline declarations.\n\n`export { a, b as c };` re-exports existing names.\n\n`export default ...` exports a default value.",
+    },
+    Builtin {
+        label: "as",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "alias a binding",
+        documentation: "Used in `import utils as u;` and `from utils import add as suma;` to rename bindings.",
+    },
+    Builtin {
+        label: "default",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "import or export a default binding",
+        documentation: "`export default function() {}` / `export default expr;` to export a default.\n\n`from utils import default as calc;` to import a default export.",
+    },
 ];
 
 // ── Top-level builtins (print, input, sys.X where X is a top-level method) ─
 
 pub static TOP_LEVEL_BUILTINS: &[Builtin] = &[
+    Builtin {
+        label: "sys",
+        kind: CompletionItemKind::MODULE,
+        detail: "system namespace",
+        documentation: "`sys.*` — system-level builtins (filesystem, OS, env, processes, …).\n\nUse `sys.X(...)` for top-level methods or `sys.ns.method(...)` for namespaced methods.",
+    },
     Builtin {
         label: "print",
         kind: CompletionItemKind::FUNCTION,

@@ -82,8 +82,24 @@ fn object_literal() {
 
 #[test]
 fn import_statement() {
-    let input = "import{trim,upper as up}from\"std\";";
-    let expected = "import { trim, upper as up } from \"std\";\n";
+    // Python-style namespace import
+    let input = "import  std ;";
+    let expected = "import std;\n";
+    assert_eq!(fmt(input), expected);
+}
+
+#[test]
+fn from_import_statement() {
+    // Python-style from-import
+    let input = "from std import trim,upper as up;";
+    let expected = "from std import trim, upper as up;\n";
+    assert_eq!(fmt(input), expected);
+}
+
+#[test]
+fn from_import_wildcard() {
+    let input = "from std import * ;";
+    let expected = "from std import *;\n";
     assert_eq!(fmt(input), expected);
 }
 
@@ -134,7 +150,7 @@ return  b;
 fn idempotent_complex() {
     // Run through twice on a non-trivial snippet.
     let input = "\
-import {trim,upper} from \"std\";
+from std import trim, upper;
 export function greet(name:string):string{
 let s:string=\"hello \"+name+upper(name);
 print(s);

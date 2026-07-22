@@ -253,7 +253,9 @@ pub(crate) fn emit_stmt(
         }
         Stmt::Function(_) => Ok(()),
         Stmt::Import { .. } | Stmt::FromImport { .. } => {
-            Err("imports are not yet supported by the Cranelift backend (Phase 4)".to_string())
+            // Imports are handled at module level (declaring FuncIds as
+            // Linkage::Import). Nothing to emit in the function body.
+            Ok(())
         }
         Stmt::ExportDecl(inner) => emit_stmt(builder, fctx, inner, runtime, user_fns, module),
         Stmt::ExportSpec(_) => {

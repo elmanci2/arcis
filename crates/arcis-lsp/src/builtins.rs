@@ -187,6 +187,18 @@ pub static TOP_LEVEL_BUILTINS: &[Builtin] = &[
         detail: "() -> string",
         documentation: "Reads a line from stdin and returns it (without the trailing newline).",
     },
+    Builtin {
+        label: "parseFloat",
+        kind: CompletionItemKind::FUNCTION,
+        detail: "(s: string) -> number",
+        documentation: "Converts a string to a floating-point number. Returns `0.0` for invalid input.",
+    },
+    Builtin {
+        label: "typeof",
+        kind: CompletionItemKind::KEYWORD,
+        detail: "typeof expr -> string",
+        documentation: "Returns the type of an expression as a string: `\"number\"`, `\"string\"`, `\"boolean\"`, `\"array\"`, `\"object\"`, or `\"void\"`.",
+    },
     // sys.fs
     Builtin {
         label: "sys.readFile",

@@ -152,6 +152,11 @@ impl Parser {
                     operand: Box::new(operand),
                 })
             }
+            TokenKind::Typeof => {
+                self.advance();
+                let operand = self.parse_unary()?;
+                Ok(Expr::TypeOf(Box::new(operand)))
+            }
             _ => self.parse_postfix(),
         }
     }

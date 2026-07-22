@@ -46,6 +46,9 @@ pub enum TokenKind {
     Default,
     As,
 
+    // Type operators.
+    Typeof,
+
     // Primitive type keywords when used as annotations.
     TypeString,
     TypeNumber,
@@ -107,6 +110,7 @@ impl TokenKind {
                 | Self::From
                 | Self::Default
                 | Self::As
+                | Self::Typeof
                 | Self::TypeString
                 | Self::TypeNumber
                 | Self::TypeBoolean
@@ -138,6 +142,7 @@ impl fmt::Display for TokenKind {
             Self::From => write!(f, "`from`"),
             Self::Default => write!(f, "`default`"),
             Self::As => write!(f, "`as`"),
+            Self::Typeof => write!(f, "`typeof`"),
             Self::TypeString => write!(f, "`string`"),
             Self::TypeNumber => write!(f, "`number`"),
             Self::TypeBoolean => write!(f, "`boolean`"),

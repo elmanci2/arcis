@@ -193,6 +193,8 @@ pub enum Expr {
     Path {
         segments: Vec<String>,
     },
+    /// `typeof expr` — returns the compile-time type as a string.
+    TypeOf(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -77,6 +77,16 @@ pub(crate) fn emit(
                     let h = builder.inst_results(call)[0];
                     return Ok((h, ArcisType::String));
                 }
+                if fname == "parseFloat" {
+                    if args.len() != 1 {
+                        return Err("parseFloat() takes exactly 1 argument".to_string());
+                    }
+                    let (arg_val, _) = emit(builder, fctx, &args[0], runtime, user_fns, module)?;
+                    let callee = module.declare_func_in_func(runtime.parse_float, builder.func);
+                    let call = builder.ins().call(callee, &[arg_val]);
+                    let v = builder.inst_results(call)[0];
+                    return Ok((v, ArcisType::Number));
+                }
                 if let Some(&func_id) = user_fns.get(fname) {
                     let result = emit_user_call(builder, fctx, func_id, args, runtime, user_fns, module)?;
                     return Ok(result);
@@ -98,8 +108,10 @@ pub(crate) fn emit(
                     }
                 }
                 // sys.X(args) — one-level Member: object is Ident("sys")
+                let mut is_sys = false;
                 if let Expr::Ident(sys_name) = object.as_ref() {
                     if sys_name == "sys" {
+                        is_sys = true;
                         let dispatched = crate::sys::try_emit_call(
                             builder, fctx, property, args, runtime, user_fns, module,
                         )?;
@@ -109,19 +121,31 @@ pub(crate) fn emit(
                     }
                 }
                 // Regular method call: arr.push(x) / s.toUpperCase() / etc.
-                let dispatched = crate::method::emit(
-                    builder, fctx, object, property, args, runtime, user_fns, module,
-                )?;
-                if let Some(result) = dispatched {
-                    return Ok(result);
+                if !is_sys {
+                    let dispatched = crate::method::emit(
+                        builder, fctx, object, property, args, runtime, user_fns, module,
+                    )?;
+                    if let Some(result) = dispatched {
+                        return Ok(result);
+                    }
+                } else {
+                    return Err(format!(
+                        "`sys.{}` is not a recognized sys method",
+                        property
+                    ));
                 }
             }
-            Err("this call form is not yet supported by the Cranelift backend".to_string())
+            Err(format!(
+                "this call form is not yet supported by the Cranelift backend (callee: {:?})",
+                callee
+            ))
         }
         Expr::Member { object, property } => {
-            // sys.args member access
+            // sys.args / sys.X member access
+            let mut is_sys_member = false;
             if let Expr::Ident(sys_name) = object.as_ref() {
                 if sys_name == "sys" {
+                    is_sys_member = true;
                     if let Some(result) = crate::sys::try_emit_member(
                         builder, fctx, property, runtime, user_fns, module,
                     )? {
@@ -130,6 +154,12 @@ pub(crate) fn emit(
                 }
             }
             if property == "length" {
+                if is_sys_member {
+                    return Err(format!(
+                        "`sys.{}` is not a recognized sys property or method",
+                        property
+                    ));
+                }
                 let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
                 let len_val = match obj_ty {
                     ArcisType::String => emit_string_length(builder, obj_val, module, runtime)?,
@@ -144,6 +174,13 @@ pub(crate) fn emit(
                 };
                 let as_f64 = builder.ins().fcvt_from_sint(F64, len_val);
                 return Ok((as_f64, ArcisType::Number));
+            }
+            // sys.X member access that wasn't handled by try_emit_member.
+            if is_sys_member {
+                return Err(format!(
+                    "`sys.{}` is not a recognized sys property or method",
+                    property
+                ));
             }
             // Object field get: obj.field → arcis_object_get(obj, "field")
             let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
@@ -236,6 +273,12 @@ pub(crate) fn emit(
             Ok((obj_handle, ArcisType::Object))
         }
         Expr::Path { .. } => Err("static paths are not supported by the Cranelift backend".to_string()),
+        Expr::TypeOf(operand) => {
+            let (_, ty) = emit(builder, fctx, operand, runtime, user_fns, module)?;
+            let type_name = ty.name();
+            let handle = emit_string_literal(builder, fctx, module, type_name, runtime)?;
+            Ok((handle, ArcisType::String))
+        }
     }
 }
 

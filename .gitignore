@@ -14,6 +14,8 @@ bin/mi-api/
 bin/testLeguaje/
 bin/*.exe
 
+bin
+
 # IDE / editor
 .vscode/
 .idea/

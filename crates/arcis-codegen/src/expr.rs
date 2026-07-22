@@ -31,6 +31,31 @@ pub(crate) fn emit(out: &mut String, expr: &Expr, ctx: &Ctx) {
         Expr::ObjectLiteral { fields } => emit_object_literal(out, fields, ctx),
         Expr::Path { segments } => out.push_str(&segments.join("::")),
         Expr::Binary { op, left, right } => emit_binary(out, *op, left, right, ctx),
+        Expr::TypeOf(operand) => {
+            let type_name = infer_type_name(operand, ctx);
+            out.push_str(&crate::types::rust_string_literal(type_name));
+        }
+    }
+}
+
+/// Infer a human-readable type name for an expression, used by `typeof`.
+fn infer_type_name(expr: &Expr, ctx: &Ctx) -> &'static str {
+    match expr {
+        Expr::Number(_) => "number",
+        Expr::String(_) => "string",
+        Expr::Bool(_) => "boolean",
+        Expr::Ident(name) => match ctx.types.get(name).map(|s| s.as_str()) {
+            Some("f64") | Some("number") => "number",
+            Some("String") | Some("string") => "string",
+            Some("bool") | Some("boolean") => "boolean",
+            Some("Vec<f64>") | Some("Vec<String>") => "array",
+            Some("()") => "void",
+            _ => "object",
+        },
+        Expr::ArrayLiteral { .. } => "array",
+        Expr::ObjectLiteral { .. } => "object",
+        Expr::Call { .. } => "string", // default for calls
+        _ => "object",
     }
 }
 

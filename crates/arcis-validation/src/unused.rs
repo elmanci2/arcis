@@ -141,6 +141,9 @@ fn collect_uses_expr(expr: &Expr, used: &mut HashSet<String>) {
                 used.insert(s.clone());
             }
         }
+        Expr::TypeOf(inner) => {
+            collect_uses_expr(inner, used);
+        }
         Expr::Number(_) | Expr::String(_) | Expr::Bool(_) => {}
     }
 }

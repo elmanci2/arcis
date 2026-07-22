@@ -78,7 +78,7 @@ pub fn compile_to_object(
 
     let mut paths = Vec::with_capacity(modules.len());
     for (i, m) in modules.iter().enumerate() {
-        let product = compile_module(m, isa.clone(), i == 0)?;
+        let product = compile_module(m, isa.clone(), i == 0, modules)?;
         let bytes = product
             .emit()
             .map_err(|e| format!("could not emit object for module `{}`: {}", m.id, e))?;
@@ -111,11 +111,12 @@ fn compile_module(
     m: &Module,
     isa: Arc<dyn TargetIsa>,
     is_root: bool,
+    all_modules: &[Module],
 ) -> Result<ObjectProduct, String> {
     let id_bytes = m.id.as_bytes().to_vec();
     let builder = ObjectBuilder::new(isa, id_bytes, cranelift_module::default_libcall_names())
         .map_err(|e| format!("ObjectBuilder: {}", e))?;
-    let mut module = ObjectModule::new(builder);
-    module::emit(&mut module, m, is_root)?;
-    Ok(module.finish())
+    let mut obj_mod = ObjectModule::new(builder);
+    module::emit(&mut obj_mod, m, is_root, all_modules)?;
+    Ok(obj_mod.finish())
 }

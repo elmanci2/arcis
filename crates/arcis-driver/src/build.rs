@@ -59,6 +59,15 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
             }
         }
         super::Backend::Cranelift => {
+            // Clean stale .o files from previous builds.
+            if let Ok(entries) = fs::read_dir(&bin_dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.extension().map_or(false, |x| x == "o") {
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
             let triple = target_lexicon::Triple::host();
             arcis_codegen_cranelift::compile_to_object(&modules, &bin_dir, &triple)?;
             // Write the runtime source alongside so the linker step can

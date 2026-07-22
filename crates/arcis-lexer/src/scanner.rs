@@ -60,6 +60,8 @@ pub(crate) fn keywords() -> HashMap<&'static str, TokenKind> {
     m.insert("from", TokenKind::From);
     m.insert("default", TokenKind::Default);
     m.insert("as", TokenKind::As);
+    // Type operator.
+    m.insert("typeof", TokenKind::Typeof);
     // `true` and `false` are keywords *and* boolean literals; we emit them as
     // `TokenKind::Bool(_)` so the parser treats them uniformly.
     m.insert("true", TokenKind::Bool(true));

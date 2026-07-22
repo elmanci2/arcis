@@ -104,6 +104,10 @@ fn emit_imports(
             // `import utils [as u]` — namespace import
             Stmt::Import { module, alias } => {
                 match resolve_specifier(importer_path, module)? {
+                    ModuleTarget::Builtin(_) => {
+                        // Builtin namespaces (e.g. `sys`) are provided by the
+                        // runtime — nothing to emit at the Rust level.
+                    }
                     ModuleTarget::Crate(crate_name) => {
                         let local = alias
                             .clone()
@@ -135,6 +139,10 @@ fn emit_imports(
                 wildcard,
             } => {
                 match resolve_specifier(importer_path, module)? {
+                    ModuleTarget::Builtin(_) => {
+                        // Builtin symbols (e.g. `from sys import gpu`) are
+                        // provided by the runtime — nothing to emit.
+                    }
                     ModuleTarget::Crate(crate_name) => {
                         if *wildcard {
                             out.push_str(&format!("use {}::*;\n", crate_name));

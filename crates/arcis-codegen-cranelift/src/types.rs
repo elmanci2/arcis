@@ -44,6 +44,18 @@ impl ArcisType {
     pub(crate) fn is_handle(self) -> bool {
         matches!(self, ArcisType::String | ArcisType::Array | ArcisType::Object)
     }
+
+    /// Return the Arcis surface name of this type.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            ArcisType::Number => "number",
+            ArcisType::Boolean => "boolean",
+            ArcisType::String => "string",
+            ArcisType::Void => "void",
+            ArcisType::Array => "array",
+            ArcisType::Object => "object",
+        }
+    }
 }
 
 /// Convert an Arcis type AST node into an [`ArcisType`] when possible.

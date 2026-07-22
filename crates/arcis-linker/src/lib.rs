@@ -39,10 +39,12 @@ pub struct Exports {
 /// What an `import` / `from ... import` resolves to:
 /// - `Local`: a `.tsr` module in the same program, resolved relatively.
 /// - `Crate`: an external Rust crate declared with the `crate:` prefix.
+/// - `Builtin`: a builtin namespace provided by the runtime (e.g. `sys`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleTarget {
     Local(PathBuf),
     Crate(String),
+    Builtin(String),
 }
 
 /// Resolve the whole program starting at `input` and return the loaded
@@ -130,7 +132,8 @@ fn load(
         if let Some(module_path) = module_path {
             match resolve_specifier(&canon, module_path)? {
                 ModuleTarget::Local(dep) => load(&dep, modules, order, stack)?,
-                ModuleTarget::Crate(_) => {} // external crates are not loaded
+                ModuleTarget::Crate(_) => {}   // external crates are not loaded
+                ModuleTarget::Builtin(_) => {} // builtin namespaces need no file
             }
         }
     }
@@ -160,6 +163,12 @@ pub fn resolve_specifier(importer: &Path, segments: &[String]) -> Result<ModuleT
         return Err("empty module path".to_string());
     }
     let first = &segments[0];
+
+    // Builtin namespaces provided by the runtime — no file needed.
+    if is_builtin_ns(first) && segments.len() == 1 {
+        return Ok(ModuleTarget::Builtin(first.clone()));
+    }
+
     if let Some(name) = first.strip_prefix("crate:") {
         if name.is_empty() {
             return Err("empty Rust crate specifier (`crate:`)".to_string());
@@ -313,8 +322,9 @@ fn validate_imports(modules: &HashMap<PathBuf, Module>) -> Result<(), String> {
                         continue; // wildcard imports everything — always valid
                     }
                     match target {
-                        ModuleTarget::Crate(_) => {
-                            // External Rust crates are validated by `rustc`.
+                        ModuleTarget::Crate(_) | ModuleTarget::Builtin(_) => {
+                            // External crates validated by `rustc`;
+                            // builtins are provided by the runtime.
                         }
                         ModuleTarget::Local(dep_path) => {
                             let target_mod = modules.get(&dep_path).ok_or_else(|| {
@@ -344,15 +354,16 @@ fn validate_imports(modules: &HashMap<PathBuf, Module>) -> Result<(), String> {
 
 /// Resolve the module target and verify it exists (for namespace imports).
 fn validate_target(
-    modules: &HashMap<PathBuf, Module>,
+    _modules: &HashMap<PathBuf, Module>,
     importer: &Path,
     module: &[String],
 ) -> Result<ModuleTarget, String> {
-    resolve_specifier(importer, module).map_err(|e| {
-        // If it was already loaded, the error from resolve_specifier
-        // won't fire because we're just re-validating.
-        e
-    })
+    resolve_specifier(importer, module)
+}
+
+/// Known builtin namespaces that are provided by the runtime without a file.
+fn is_builtin_ns(name: &str) -> bool {
+    matches!(name, "sys")
 }
 
 #[cfg(test)]

@@ -62,27 +62,40 @@ fn compile_runtime() -> Result<PathBuf, String> {
     Ok(o_path)
 }
 
-/// Step 2: link all `.o` files (root module + runtime) into a single
+/// Step 2: link all `.o` files (per-module + runtime) into a single
 /// executable at `bin/<root_id>`.
 fn link(root_id: &str) -> Result<PathBuf, String> {
     let runtime_o = compile_runtime()?;
-    let root_o = PathBuf::from("bin").join(format!("{}.o", root_id));
     let bin_path = PathBuf::from("bin").join(root_id);
 
-    let status = find_cc()
-        .arg("-o")
-        .arg(&bin_path)
-        .arg(&root_o)
-        .arg(&runtime_o)
-        .arg("-no-pie")
+    // Collect every `.o` file in bin/ (all modules + runtime).
+    let mut objects: Vec<PathBuf> = Vec::new();
+    let bin_dir = Path::new("bin");
+    if let Ok(entries) = std::fs::read_dir(bin_dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().map_or(false, |x| x == "o") {
+                objects.push(p);
+            }
+        }
+    }
+
+    let mut cmd = find_cc();
+    cmd.arg("-o").arg(&bin_path);
+    for obj in &objects {
+        cmd.arg(obj);
+    }
+    cmd.arg("-no-pie")
         .arg("-lm")
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let status = cmd
         .status()
         .map_err(|e| format!("could not invoke `cc` for linking: {}", e))?;
     if !status.success() {
         return Err(format!("`cc` failed to link `{}`", bin_path.display()));
     }
+    let _ = runtime_o;
     Ok(bin_path)
 }
 

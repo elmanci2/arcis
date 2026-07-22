@@ -369,6 +369,7 @@ fn token_text(kind: &TokenKind) -> String {
         From => "from".into(),
         Default => "default".into(),
         As => "as".into(),
+        Typeof => "typeof".into(),
         TypeString => "string".into(),
         TypeNumber => "number".into(),
         TypeBoolean => "boolean".into(),

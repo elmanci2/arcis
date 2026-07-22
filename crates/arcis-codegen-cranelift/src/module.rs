@@ -28,10 +28,11 @@ use cranelift_module::{FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
 use crate::collect::collect_reassigned;
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::function::emit_function;
 use crate::rt::Runtime;
 use crate::stmt::emit_stmt;
+use crate::types::{from_ast, ArcisType};
 
 /// Emit one Arcis module into `obj_module`.
 pub(crate) fn emit(
@@ -47,32 +48,35 @@ pub(crate) fn emit(
     let export_info = build_export_map(all_modules);
 
     // ── Declare own top-level functions as Export ──────────────────────────
-    let mut user_fns: HashMap<String, FuncId> = HashMap::new();
+    let mut user_fns: HashMap<String, FnInfo> = HashMap::new();
     for stmt in &m.program.stmts {
         match stmt {
             Stmt::Function(f) => {
+                let params = param_types(f);
                 let sig = function_signature(obj_module, f);
                 let id = obj_module
                     .declare_function(f.name.as_str(), Linkage::Export, &sig)
                     .map_err(|e| format!("declare `{}`: {}", f.name, e))?;
-                user_fns.insert(f.name.clone(), id);
+                user_fns.insert(f.name.clone(), FnInfo { id, params });
             }
             Stmt::ExportDecl(inner) => {
                 if let Stmt::Function(f) = inner.as_ref() {
+                    let params = param_types(f);
                     let sig = function_signature(obj_module, f);
                     let id = obj_module
                         .declare_function(f.name.as_str(), Linkage::Export, &sig)
                         .map_err(|e| format!("declare export `{}`: {}", f.name, e))?;
-                    user_fns.insert(f.name.clone(), id);
+                    user_fns.insert(f.name.clone(), FnInfo { id, params });
                 }
             }
             Stmt::ExportDefault(arcis_ast::ExportDefault::Function(f)) => {
                 let name = if f.name.is_empty() { "__default".into() } else { f.name.clone() };
+                let params = param_types(f);
                 let sig = function_signature(obj_module, f);
                 let id = obj_module
                     .declare_function(&name, Linkage::Export, &sig)
                     .map_err(|e| format!("declare export default `{}`: {}", name, e))?;
-                user_fns.insert(name, id);
+                user_fns.insert(name, FnInfo { id, params });
             }
             _ => {}
         }
@@ -82,7 +86,6 @@ pub(crate) fn emit(
     for stmt in &m.program.stmts {
         match stmt {
             Stmt::Import { module: path, .. } => {
-                // Namespace import: `import test` — declare all its exports.
                 if !path.first().map_or(false, |s| s == "sys") {
                     declare_imported_module(obj_module, &m.path, path, &export_info, &mut user_fns)?;
                 }
@@ -94,11 +97,11 @@ pub(crate) fn emit(
                     } else {
                         for n in names {
                             let local = n.alias.clone().unwrap_or_else(|| n.name.clone());
-                            let sig = lookup_export_sig(&m.path, path, &n.name, &export_info)?;
+                            let (sig, params) = lookup_export_sig_and_params(&m.path, path, &n.name, &export_info)?;
                             let id = obj_module
                                 .declare_function(&local, Linkage::Import, &sig)
                                 .map_err(|e| format!("declare import `{}`: {}", local, e))?;
-                            user_fns.insert(local, id);
+                            user_fns.insert(local, FnInfo { id, params });
                         }
                     }
                 }
@@ -120,9 +123,10 @@ pub(crate) fn emit(
         };
         if let Some(f) = func_ast {
             let lookup_name = if f.name.is_empty() { "__default" } else { &f.name };
-            let func_id = *user_fns.get(lookup_name).ok_or_else(|| {
+            let fn_info = user_fns.get(lookup_name).ok_or_else(|| {
                 format!("function `{}` not found in user_fns (internal error)", lookup_name)
             })?;
+            let func_id = fn_info.id;
             let sig = function_signature(obj_module, f);
             let mut ctx = Context::new();
             ctx.func = Function::with_name_signature(
@@ -155,7 +159,6 @@ pub(crate) fn emit(
             main_sig.clone(),
         );
         {
-            // Pre-validate.
             let flags = cranelift_codegen::settings::Flags::new(
                 cranelift_codegen::settings::builder(),
             );
@@ -176,9 +179,7 @@ pub(crate) fn emit(
 
             for stmt in &m.program.stmts {
                 match stmt {
-                    Stmt::Function(_) | Stmt::Import { .. } | Stmt::FromImport { .. } => {
-                        // Already handled above.
-                    }
+                    Stmt::Function(_) | Stmt::Import { .. } | Stmt::FromImport { .. } => {}
                     _ => {
                         emit_stmt(
                             &mut builder,
@@ -203,18 +204,23 @@ pub(crate) fn emit(
     Ok(())
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+fn param_types(f: &arcis_ast::Function) -> Vec<ArcisType> {
+    f.params
+        .iter()
+        .map(|p| from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number))
+        .collect()
+}
+
 // ── Import helpers ──────────────────────────────────────────────────────────
 
-/// Info about one exported symbol from a module.
 struct ExportInfo {
-    /// The Arcis function AST (params + return type).
     func: arcis_ast::Function,
 }
 
-/// Map: (module_path_canonical) → (exported_name → ExportInfo)
 type ExportMap = HashMap<std::path::PathBuf, HashMap<String, ExportInfo>>;
 
-/// Build a lookup table of every exported function in every module.
 fn build_export_map(all_modules: &[Module]) -> ExportMap {
     let mut map: ExportMap = HashMap::new();
     for m in all_modules {
@@ -233,8 +239,6 @@ fn build_export_map(all_modules: &[Module]) -> ExportMap {
                 }
                 Stmt::ExportSpec(items) => {
                     for it in items {
-                        // Re-exports must point to a function declared in the same module.
-                        // Look up the original function.
                         if let Some(orig) = find_function_in_module(m, &it.name) {
                             let alias = it.alias.clone().unwrap_or_else(|| it.name.clone());
                             exports.insert(alias, ExportInfo { func: orig.clone() });
@@ -259,7 +263,6 @@ fn build_export_map(all_modules: &[Module]) -> ExportMap {
     map
 }
 
-/// Find a function AST in a module by name.
 fn find_function_in_module(m: &Module, name: &str) -> Option<arcis_ast::Function> {
     for stmt in &m.program.stmts {
         match stmt {
@@ -280,13 +283,12 @@ fn find_function_in_module(m: &Module, name: &str) -> Option<arcis_ast::Function
     None
 }
 
-/// Look up the signature of an exported function from another module.
-fn lookup_export_sig(
+fn lookup_export_sig_and_params(
     importer: &std::path::Path,
     path: &[String],
     name: &str,
     export_map: &ExportMap,
-) -> Result<cranelift_codegen::ir::Signature, String> {
+) -> Result<(cranelift_codegen::ir::Signature, Vec<ArcisType>), String> {
     let target = arcis_linker::resolve_specifier(importer, path).map_err(|e| e)?;
     match target {
         arcis_linker::ModuleTarget::Local(dep_path) => {
@@ -294,28 +296,31 @@ fn lookup_export_sig(
                 format!("module `{}` not found in export map", path.join("."))
             })?;
             let info = mod_exports.get(name).ok_or_else(|| {
-                format!(
-                    "`{}` does not export `{}`",
-                    path.join("."),
-                    name
-                )
+                format!("`{}` does not export `{}`", path.join("."), name)
             })?;
-            Ok(import_sig_from_func(&info.func))
+            let sig = import_sig_from_func(&info.func);
+            let params = param_types(&info.func);
+            Ok((sig, params))
         }
-        _ => Err(format!(
-            "`{}` is not a local module — only file-based imports are supported",
-            path.join(".")
-        )),
+        _ => Err(format!("`{}` is not a local module", path.join("."))),
     }
 }
 
-/// Declare all exports from a module as imports (for namespace or wildcard).
+fn lookup_export_sig(
+    importer: &std::path::Path,
+    path: &[String],
+    name: &str,
+    export_map: &ExportMap,
+) -> Result<cranelift_codegen::ir::Signature, String> {
+    lookup_export_sig_and_params(importer, path, name, export_map).map(|(s, _)| s)
+}
+
 fn declare_imported_module(
     obj_module: &mut ObjectModule,
     importer: &std::path::Path,
     path: &[String],
     export_map: &ExportMap,
-    user_fns: &mut HashMap<String, FuncId>,
+    user_fns: &mut HashMap<String, FnInfo>,
 ) -> Result<(), String> {
     let target = arcis_linker::resolve_specifier(importer, path).map_err(|e| e)?;
     match target {
@@ -326,10 +331,11 @@ fn declare_imported_module(
             for (name, info) in mod_exports {
                 if user_fns.contains_key(name) { continue; }
                 let sig = import_sig_from_func(&info.func);
+                let params = param_types(&info.func);
                 let id = obj_module
                     .declare_function(name, Linkage::Import, &sig)
                     .map_err(|e| format!("declare import `{}`: {}", name, e))?;
-                user_fns.insert(name.clone(), id);
+                user_fns.insert(name.clone(), FnInfo { id, params });
             }
         }
         _ => {
@@ -342,10 +348,7 @@ fn declare_imported_module(
     Ok(())
 }
 
-/// Convert an Arcis function AST to a Cranelift import signature.
 fn import_sig_from_func(f: &arcis_ast::Function) -> cranelift_codegen::ir::Signature {
-    use crate::types::{from_ast, ArcisType};
-
     let mut sig = cranelift_codegen::ir::Signature::new(
         cranelift_codegen::isa::CallConv::SystemV,
     );
@@ -361,13 +364,10 @@ fn import_sig_from_func(f: &arcis_ast::Function) -> cranelift_codegen::ir::Signa
     sig
 }
 
-/// Build a Cranelift signature for an Arcis function defined in this module.
 fn function_signature(
     module: &mut ObjectModule,
     f: &arcis_ast::Function,
 ) -> cranelift_codegen::ir::Signature {
-    use crate::types::{from_ast, ArcisType};
-
     let mut sig = module.make_signature();
     for p in &f.params {
         let ty = from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number);

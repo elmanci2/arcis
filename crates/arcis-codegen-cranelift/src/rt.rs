@@ -11,7 +11,7 @@ pub(crate) struct Runtime {
     pub string_from_cstr: FuncId, pub string_concat: FuncId, pub string_eq: FuncId,
     pub string_drop: FuncId, pub print: FuncId, pub println: FuncId,
     pub num_to_string: FuncId, pub bool_to_string: FuncId,
-    pub parse_float: FuncId,
+    pub parse_float: FuncId, pub is_nan: FuncId,
     pub string_to_uppercase: FuncId, pub string_to_lowercase: FuncId,
     pub string_trim: FuncId, pub string_substring: FuncId,
     pub string_index_of: FuncId, pub string_includes: FuncId, pub string_char_at: FuncId,
@@ -93,6 +93,7 @@ impl Runtime {
             num_to_string:    d!("arcis_num_to_string", &[F64], &[I64]),
             bool_to_string:   d!("arcis_bool_to_string", &[I32], &[I64]),
             parse_float:      d!("arcis_parse_float", &[I64], &[F64]),
+            is_nan:           d!("arcis_is_nan", &[F64], &[I32]),
 
             string_to_uppercase: d!("arcis_string_to_uppercase", &[I64], &[I64]),
             string_to_lowercase: d!("arcis_string_to_lowercase", &[I64], &[I64]),

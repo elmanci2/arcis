@@ -39,6 +39,10 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
+    /// Line (0-indexed) of the `function` keyword in the source.
+    pub line: usize,
+    /// Column (0-indexed) of the function name in the source.
+    pub col: usize,
 }
 
 /// One named binding inside an `import { ... }`. `name` is the exported name;

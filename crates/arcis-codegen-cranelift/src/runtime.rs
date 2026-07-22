@@ -60,6 +60,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <sys/wait.h>
 #include <signal.h>
 #include <errno.h>
+#include <math.h>
 
 typedef struct {
     char*    ptr;
@@ -224,10 +225,18 @@ int64_t arcis_current_pid(void) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 double arcis_parse_float(ArcisString* s) {
-    if (s == NULL || s->len == 0) return 0.0;
+    if (s == NULL || s->len == 0) return NAN;
     char tmp[4096];
     snprintf(tmp, sizeof(tmp), "%.*s", (int)s->len, s->ptr);
-    return strtod(tmp, NULL);
+    char* end = NULL;
+    double val = strtod(tmp, &end);
+    // Return NaN if no digits parsed or trailing garbage remains.
+    if (end == tmp || *end != '\0') return NAN;
+    return val;
+}
+
+int32_t arcis_is_nan(double v) {
+    return isnan(v) ? 1 : 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

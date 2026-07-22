@@ -13,7 +13,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::rt::Runtime;
 use crate::stmt::emit_stmt;
 use crate::types::{from_ast, ArcisType};
@@ -24,7 +24,7 @@ use crate::types::{from_ast, ArcisType};
 pub(crate) fn emit_function(
     func: &mut ClifFunction,
     f: &Function,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     runtime: &Runtime,
     reassigned: &HashSet<String>,
     module: &mut ObjectModule,

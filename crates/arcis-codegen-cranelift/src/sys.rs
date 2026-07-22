@@ -7,7 +7,7 @@ use cranelift_codegen::ir::InstBuilder;
 use cranelift_frontend::FunctionBuilder;
 use cranelift_module::{FuncId, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::expr;
 use crate::rt::Runtime;
 use crate::types::ArcisType;
@@ -21,7 +21,7 @@ pub(crate) fn try_emit_call(
     property: &str,
     args: &[Expr],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<Option<(V, ArcisType)>, String> {
     // Helper macros to reduce boilerplate.
@@ -86,7 +86,7 @@ pub(crate) fn try_emit_subns(
     method: &str,
     args: &[Expr],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<Option<(V, ArcisType)>, String> {
     macro_rules! c0s { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::String) }}; }
@@ -150,7 +150,7 @@ pub(crate) fn try_emit_member(
     _fctx: &mut FunctionCtx,
     property: &str,
     runtime: &Runtime,
-    _user_fns: &HashMap<String, FuncId>,
+    _user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<Option<(V, ArcisType)>, String> {
     if property == "args" {

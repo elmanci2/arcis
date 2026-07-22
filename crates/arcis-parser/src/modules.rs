@@ -104,8 +104,10 @@ pub(crate) fn parse_export(p: &mut Parser) -> Result<Stmt, ParseError> {
     // export default ...
     if p.matches(&TokenKind::Default) {
         if p.check(&TokenKind::Function) {
-            p.advance(); // function
-            let f = p.parse_function_rest(false)?;
+            let fn_tok = p.advance(); // function
+            let fn_line = fn_tok.line;
+            let fn_col = fn_tok.col;
+            let f = p.parse_function_rest(false, fn_line, fn_col)?;
             return Ok(Stmt::ExportDefault(ExportDefault::Function(f)));
         }
         let expr = p.parse_expr()?;

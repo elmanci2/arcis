@@ -172,8 +172,10 @@ impl Parser {
 
     /// `function NAME (params): RET { body }`
     pub(crate) fn parse_function(&mut self) -> Result<Stmt, ParseError> {
-        self.advance(); // function
-        let f = self.parse_function_rest(true)?;
+        let fn_tok = self.advance(); // function
+        let fn_line = fn_tok.line;
+        let fn_col = fn_tok.col;
+        let f = self.parse_function_rest(true, fn_line, fn_col)?;
         Ok(Stmt::Function(f))
     }
 
@@ -184,11 +186,15 @@ impl Parser {
     pub(crate) fn parse_function_rest(
         &mut self,
         require_name: bool,
+        fn_keyword_line: usize,
+        fn_keyword_col: usize,
     ) -> Result<Function, ParseError> {
-        let name = if let TokenKind::Ident(_) = self.peek_kind() {
+        let (name, name_line, name_col) = if let TokenKind::Ident(_) = self.peek_kind() {
             let tok = self.advance();
+            let line = tok.line;
+            let col = tok.col;
             match tok.kind {
-                TokenKind::Ident(s) => s,
+                TokenKind::Ident(s) => (s, line, col),
                 _ => unreachable!(),
             }
         } else if require_name {
@@ -199,7 +205,7 @@ impl Parser {
                 msg: "expected function name".to_string(),
             });
         } else {
-            String::new()
+            (String::new(), fn_keyword_line, fn_keyword_col)
         };
 
         self.expect(&TokenKind::LParen, "`(` after function name")?;
@@ -241,6 +247,8 @@ impl Parser {
             params,
             return_type,
             body,
+            line: name_line,
+            col: name_col,
         })
     }
 

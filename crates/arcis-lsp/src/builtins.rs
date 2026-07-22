@@ -191,7 +191,19 @@ pub static TOP_LEVEL_BUILTINS: &[Builtin] = &[
         label: "parseFloat",
         kind: CompletionItemKind::FUNCTION,
         detail: "(s: string) -> number",
-        documentation: "Converts a string to a floating-point number. Returns `0.0` for invalid input.",
+        documentation: "Converts a string to a floating-point number. Returns `NaN` if the string is not a valid number.",
+    },
+    Builtin {
+        label: "isNaN",
+        kind: CompletionItemKind::FUNCTION,
+        detail: "(n: number) -> boolean",
+        documentation: "Returns `true` if the value is `NaN` (not a number). Use to validate results from `parseFloat`.",
+    },
+    Builtin {
+        label: "str",
+        kind: CompletionItemKind::FUNCTION,
+        detail: "(value: any) -> string",
+        documentation: "Converts any value to its string representation. Use for explicit string concatenation.",
     },
     Builtin {
         label: "typeof",

@@ -25,7 +25,7 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_module::{DataDescription, FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-use crate::context::{FunctionCtx, LoopFrame};
+use crate::context::{FnInfo, FunctionCtx, LoopFrame};
 use crate::expr;
 use crate::rt::Runtime;
 use crate::types::{from_ast, ArcisType};
@@ -39,7 +39,7 @@ pub(crate) fn emit_stmt(
     fctx: &mut FunctionCtx,
     stmt: &Stmt,
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     match stmt {
@@ -281,7 +281,7 @@ fn emit_if(
     else_branch: Option<&[Stmt]>,
     continuation: Option<cranelift_codegen::ir::Block>,
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     // Evaluate the condition in the current block. Whatever block is
@@ -368,7 +368,7 @@ fn emit_while(
     condition: &Expr,
     body: &[Stmt],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     let cond_block = builder.create_block();
@@ -417,7 +417,7 @@ fn emit_for(
     update: Option<&Stmt>,
     body: &[Stmt],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     if let Some(init_stmt) = init {

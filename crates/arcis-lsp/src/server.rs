@@ -85,6 +85,7 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
                         work_done_progress_options:
                             crate::lsp::WorkDoneProgressOptions::default(),
                     }),
+                    definition_provider: Some(OneOf::Left(true)),
                     document_formatting_provider: Some(OneOf::Left(true)),
                     text_document_sync: Some(TextDocumentSyncCapability::Options(
                         TextDocumentSyncOptions {
@@ -127,6 +128,14 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
             let (before, after) = split_at_position(text, pos);
             let hover = crate::hover::hover_at(&before, &after);
             async move { Ok(hover) }
+        })
+        // ── Go-to-definition ──────────────────────────────────────
+        .request::<request::GotoDefinition, _>(|state, params| {
+            let uri = &params.text_document_position_params.text_document.uri;
+            let pos = params.text_document_position_params.position;
+            let text = state.docs.get(uri).unwrap_or_default();
+            let def = crate::definition::goto_definition(text, uri, pos);
+            async move { Ok(def) }
         })
         // ── Formatting ────────────────────────────────────────────
         .request::<request::Formatting, _>(|state, params| {

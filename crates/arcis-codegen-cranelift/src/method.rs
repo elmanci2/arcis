@@ -18,7 +18,7 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_module::{FuncId, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::expr;
 use crate::rt::Runtime;
 use crate::types::ArcisType;
@@ -32,7 +32,7 @@ pub(crate) fn emit(
     property: &str,
     args: &[Expr],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<Option<(cranelift_codegen::ir::Value, ArcisType)>, String> {
     // Emit the object expression once.

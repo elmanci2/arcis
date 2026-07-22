@@ -21,6 +21,13 @@ use cranelift_module::DataId;
 
 use crate::types::ArcisType;
 
+/// Info about a user-defined function available for calling.
+#[derive(Debug, Clone)]
+pub(crate) struct FnInfo {
+    pub id: cranelift_module::FuncId,
+    pub params: Vec<ArcisType>,
+}
+
 /// Stack frame for one enclosing loop. Used by `stmt::emit` to dispatch
 /// `break` and `continue` to the right Cranelift block.
 #[derive(Debug, Clone, Copy)]

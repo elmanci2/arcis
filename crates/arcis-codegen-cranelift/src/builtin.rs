@@ -18,7 +18,7 @@ use cranelift_module::FuncId;
 use cranelift_module::Module as CraneliftModule;
 use cranelift_object::ObjectModule;
 
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::expr;
 use crate::rt::Runtime;
 use crate::types::ArcisType;
@@ -31,7 +31,7 @@ pub(crate) fn emit_print(
     fctx: &mut FunctionCtx,
     args: &[Expr],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<cranelift_codegen::ir::Value, String> {
     if args.len() != 1 {

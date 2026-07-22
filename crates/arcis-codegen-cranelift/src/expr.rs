@@ -23,7 +23,7 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_module::{DataDescription, FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-use crate::context::FunctionCtx;
+use crate::context::{FnInfo, FunctionCtx};
 use crate::rt::Runtime;
 use crate::types::ArcisType;
 
@@ -33,7 +33,7 @@ pub(crate) fn emit(
     fctx: &mut FunctionCtx,
     expr: &Expr,
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
     match expr {
@@ -87,8 +87,29 @@ pub(crate) fn emit(
                     let v = builder.inst_results(call)[0];
                     return Ok((v, ArcisType::Number));
                 }
-                if let Some(&func_id) = user_fns.get(fname) {
-                    let result = emit_user_call(builder, fctx, func_id, args, runtime, user_fns, module)?;
+                if fname == "str" {
+                    if args.len() != 1 {
+                        return Err("str() takes exactly 1 argument".to_string());
+                    }
+                    let (val, ty) = emit(builder, fctx, &args[0], runtime, user_fns, module)?;
+                    let handle = promote_to_string(builder, val, ty, module, runtime)?;
+                    return Ok((handle, ArcisType::String));
+                }
+                if fname == "isNaN" {
+                    if args.len() != 1 {
+                        return Err("isNaN() takes exactly 1 argument".to_string());
+                    }
+                    let (arg_val, _) = emit(builder, fctx, &args[0], runtime, user_fns, module)?;
+                    let callee = module.declare_func_in_func(runtime.is_nan, builder.func);
+                    let call = builder.ins().call(callee, &[arg_val]);
+                    let raw = builder.inst_results(call)[0];
+                    // is_nan returns i32 (0/1), convert to i8 boolean.
+                    let one = builder.ins().iconst(I32, 1);
+                    let v = builder.ins().icmp(IntCC::Equal, raw, one);
+                    return Ok((v, ArcisType::Boolean));
+                }
+                if let Some(fn_info) = user_fns.get(fname) {
+                    let result = emit_user_call(builder, fctx, fn_info, fname, args, runtime, user_fns, module)?;
                     return Ok(result);
                 }
             }
@@ -288,7 +309,7 @@ fn emit_unary(
     op: &UnaryOp,
     operand: &Expr,
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
     let (val, ty) = emit(builder, fctx, operand, runtime, user_fns, module)?;
@@ -324,23 +345,23 @@ fn emit_binary(
     left: &Expr,
     right: &Expr,
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
     let (lv, lt) = emit(builder, fctx, left, runtime, user_fns, module)?;
     let (rv, rt) = emit(builder, fctx, right, runtime, user_fns, module)?;
 
-    // String concatenation on `+` short-circuit.
+    // String concatenation on `+` — both sides must be strings.
     if matches!(op, BinOp::Add) && (lt == ArcisType::String || rt == ArcisType::String) {
-        let a = if lt == ArcisType::String { lv } else {
-            // Promote the non-string operand to a string handle via runtime.
-            promote_to_string(builder, lv, lt, module, runtime)?
-        };
-        let b = if rt == ArcisType::String { rv } else {
-            promote_to_string(builder, rv, rt, module, runtime)?
-        };
+        if lt != ArcisType::String || rt != ArcisType::String {
+            return Err(format!(
+                "cannot add `{}` and `{}` with `+` — use explicit conversion",
+                lt.name(),
+                rt.name()
+            ));
+        }
         let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
-        let call = builder.ins().call(callee, &[a, b]);
+        let call = builder.ins().call(callee, &[lv, rv]);
         let handle = builder.inst_results(call)[0];
         return Ok((handle, ArcisType::String));
     }
@@ -437,25 +458,42 @@ fn emit_binary(
 fn emit_user_call(
     builder: &mut FunctionBuilder,
     fctx: &mut FunctionCtx,
-    func_id: FuncId,
+    fn_info: &crate::context::FnInfo,
+    fn_name: &str,
     args: &[Expr],
     runtime: &Runtime,
-    user_fns: &HashMap<String, FuncId>,
+    user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
+    // Type-check arguments against declared parameter types.
+    if args.len() != fn_info.params.len() {
+        return Err(format!(
+            "`{}` expects {} argument(s), got {}",
+            fn_name,
+            fn_info.params.len(),
+            args.len()
+        ));
+    }
     let mut arg_vals: Vec<cranelift_codegen::ir::Value> = Vec::with_capacity(args.len());
-    for a in args {
-        let (v, _) = emit(builder, fctx, a, runtime, user_fns, module)?;
+    for (i, a) in args.iter().enumerate() {
+        let (v, arg_ty) = emit(builder, fctx, a, runtime, user_fns, module)?;
+        let expected = fn_info.params[i];
+        if arg_ty != expected && arg_ty != ArcisType::Void {
+            return Err(format!(
+                "`{}` parameter {} expects `{}`, got `{}`",
+                fn_name,
+                i + 1,
+                expected.name(),
+                arg_ty.name()
+            ));
+        }
         arg_vals.push(v);
     }
+    let func_id = fn_info.id;
     let callee = module.declare_func_in_func(func_id, builder.func);
     let call = builder.ins().call(callee, &arg_vals);
     let results = builder.inst_results(call);
     let result_val = results.first().copied();
-    // Infer the return type from the callee's signature. We only care
-    // about the first return value (Arcis functions return at most one
-    // value today). The signature lives in the module's declaration
-    // table; we read it via `module.declarations().get_function_decl`.
     let result_ty = {
         let decl = module.declarations().get_function_decl(func_id);
         match decl.signature.returns.first() {

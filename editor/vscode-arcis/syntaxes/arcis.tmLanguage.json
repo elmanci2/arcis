@@ -58,7 +58,7 @@
     },
     "control-keywords": {
       "name": "keyword.control.arcis",
-      "match": "\\b(let|const|function|return|if|else|while|for|of|break|continue)\\b"
+      "match": "\\b(let|const|function|return|if|else|while|for|of|break|continue|typeof)\\b"
     },
     "type-keywords": {
       "name": "storage.type.arcis",

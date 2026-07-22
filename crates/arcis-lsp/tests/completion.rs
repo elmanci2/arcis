@@ -7,8 +7,9 @@
 use arcis_lsp::completion::completions_at;
 
 /// Helper: returns the labels of the items that match.
+/// `full_text` is the complete document text (empty = no local defs).
 fn labels(prefix: &str) -> Vec<String> {
-    completions_at(prefix)
+    completions_at(prefix, "")
         .into_iter()
         .map(|i| i.label)
         .collect()

@@ -54,7 +54,7 @@ pub(crate) struct Runtime {
     // Phase 5: sys.* — memory, cpu, gpu, disk, net.
     pub memory_total: FuncId, pub memory_free: FuncId, pub memory_used: FuncId, pub memory_available: FuncId,
     pub cpu_model: FuncId, pub cpu_brand: FuncId, pub cpu_frequency: FuncId, pub cpu_usage: FuncId, pub cpu_cores: FuncId,
-    pub gpu_list: FuncId,
+    pub gpu_name: FuncId, pub gpu_list: FuncId,
     pub disk_free: FuncId,
     pub net_online: FuncId, pub net_public_ip: FuncId, pub net_interfaces: FuncId,
 
@@ -183,6 +183,7 @@ impl Runtime {
             cpu_frequency: d!("arcis_cpu_frequency", &[], &[F64]),
             cpu_usage:     d!("arcis_cpu_usage", &[], &[F64]),
             cpu_cores:     d!("arcis_cpu_cores", &[], &[F64]),
+            gpu_name:      d!("arcis_gpu_name", &[], &[I64]),
             gpu_list:      d!("arcis_gpu_list", &[], &[I64]),
             disk_free:     d!("arcis_disk_free", &[I64], &[F64]),
             net_online:    d!("arcis_net_online", &[], &[F64]),

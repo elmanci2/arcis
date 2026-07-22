@@ -19,7 +19,7 @@ use std::ops::ControlFlow;
 
 use async_lsp::lsp_types::{
     notification, request, CompletionItem, CompletionList, CompletionOptions,
-    CompletionResponse, CompletionTextEdit, CompletionParams, Diagnostic,
+    CompletionResponse, CompletionTextEdit, Diagnostic,
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents,
     HoverProviderCapability, InitializeResult, MarkupContent, MarkupKind, OneOf,
     Position, Range, PublishDiagnosticsParams, ServerCapabilities, ServerInfo,
@@ -107,12 +107,10 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
         .request::<request::Completion, _>(|state, params| {
             let uri = params.text_document_position.text_document.uri;
             let pos = params.text_document_position.position;
-            let prefix = state
-                .docs
-                .get(&uri)
-                .map(|text| prefix_up_to(text, pos))
-                .unwrap_or_default();
-            let items: Vec<CompletionItem> = completions_at(&prefix);
+            let full_text = state.docs.get(&uri).unwrap_or_default();
+            let prefix = prefix_up_to(full_text, pos);
+            let items: Vec<CompletionItem> =
+                completions_at(&prefix, full_text);
             async move {
                 Ok(Some(CompletionResponse::List(CompletionList {
                     is_incomplete: false,
@@ -168,26 +166,6 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
     router
 }
 
-/// Handle `textDocument/completion`. Reads the stored document text
-/// for the URI, computes the prefix up to the cursor, and serves the
-/// appropriate slice of the builtin table.
-fn on_completion(
-    state: &mut ServerState,
-    params: CompletionParams,
-) -> async_lsp::Result<Option<CompletionResponse>> {
-    let uri = &params.text_document_position.text_document.uri;
-    let pos = params.text_document_position.position;
-    let prefix = state
-        .docs
-        .get(uri)
-        .map(|text| prefix_up_to(text, pos))
-        .unwrap_or_default();
-    let items: Vec<CompletionItem> = completions_at(&prefix);
-    Ok(Some(CompletionResponse::List(CompletionList {
-        is_incomplete: false,
-        items,
-    })))
-}
 
 /// `didOpen`: store the document text + publish diagnostics.
 fn on_did_open(

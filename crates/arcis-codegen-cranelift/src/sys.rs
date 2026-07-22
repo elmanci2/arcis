@@ -153,11 +153,19 @@ pub(crate) fn try_emit_member(
     _user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<Option<(V, ArcisType)>, String> {
-    if property == "args" {
-        let c = module.declare_func_in_func(runtime.sys_args, builder.func);
-        let call = builder.ins().call(c, &[]);
-        let h = builder.inst_results(call)[0];
-        return Ok(Some((h, ArcisType::Array)));
+    match property {
+        "args" => {
+            let c = module.declare_func_in_func(runtime.sys_args, builder.func);
+            let call = builder.ins().call(c, &[]);
+            let h = builder.inst_results(call)[0];
+            Ok(Some((h, ArcisType::Array)))
+        }
+        "gpu" => {
+            let c = module.declare_func_in_func(runtime.gpu_name, builder.func);
+            let call = builder.ins().call(c, &[]);
+            let h = builder.inst_results(call)[0];
+            Ok(Some((h, ArcisType::String)))
+        }
+        _ => Ok(None),
     }
-    Ok(None)
 }

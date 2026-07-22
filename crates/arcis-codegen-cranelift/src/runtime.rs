@@ -928,6 +928,22 @@ double arcis_cpu_cores(void) { return arcis_os_cpu_count(); }
 // sys.* — GPU, Disk, Net (Phase 5) — via subprocess
 // ─────────────────────────────────────────────────────────────────────────────
 
+ArcisString* arcis_gpu_name(void) {
+    ArcisString* out = arcis_process_exec(arcis_string_from_cstr(
+        "lspci 2>/dev/null | grep -iE 'vga|3d|display|gpu' | sed 's/.*: //' | head -1"
+    ), NULL);
+    if (out == NULL || out->len == 0) {
+        if (out != NULL) arcis_string_drop(out);
+        return arcis_string_from_cstr("unknown");
+    }
+    // Trim trailing newline.
+    if (out->len > 0 && out->ptr[out->len - 1] == '\n') {
+        out->len--;
+        out->ptr[out->len] = '\0';
+    }
+    return out;
+}
+
 ArcisVec* arcis_gpu_list(void) {
     ArcisString* cmd = arcis_string_from_cstr("lspci -vmm 2>/dev/null | grep -A2 'VGA\\|3D\\|Display'");
     ArcisString* out = arcis_process_exec(cmd, NULL);

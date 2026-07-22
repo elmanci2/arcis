@@ -1,12 +1,13 @@
 // Program entry point (by convention, `main.tsr`).
 //
-// Imports symbols from other modules using the same syntax as TypeScript:
-//   - named imports:         { sumar, PI }
-//   - import with alias:     { gritarFuerte as GRITAR }
-//   - default import:        calcula
-import { sumar, PI } from "mate";
-import calcula from "mate";
-import { gritarFuerte as GRITAR } from "texto";
+// Imports symbols from other modules using Python-style syntax:
+//   - namespace import:       import mate
+//   - named imports:          from mate import sumar, PI
+//   - import with alias:      from texto import gritarFuerte as GRITAR
+//   - default import:         from mate import default as calcula
+from mate import sumar, PI;
+from mate import default as calcula;
+from texto import gritarFuerte as GRITAR;
 
 print("PI = " + PI);
 print("2 + 3 = " + sumar(2, 3));

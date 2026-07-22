@@ -78,8 +78,19 @@ mod tests {
 
     #[test]
     fn parses_module_import() {
-        let toks = lex("import { add } from \"utils\";").expect("lex must succeed");
+        let toks = lex("import utils;").expect("lex must succeed");
         let prog = parse(toks).expect("parse must succeed");
         assert!(matches!(prog.stmts[0], arcis_ast::Stmt::Import { .. }));
+    }
+
+    #[test]
+    fn parses_from_import() {
+        let toks =
+            lex("from utils import add, sub as s;").expect("lex must succeed");
+        let prog = parse(toks).expect("parse must succeed");
+        assert!(matches!(
+            prog.stmts[0],
+            arcis_ast::Stmt::FromImport { .. }
+        ));
     }
 }

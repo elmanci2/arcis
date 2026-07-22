@@ -45,7 +45,7 @@ pub(crate) fn run(dir: &Path) -> Result<(), String> {
     println!();
     println!("To use Rust dependencies, edit `Cargo.toml` and uncomment the");
     println!("lines under `[dependencies]`, then use:");
-    println!("  import {{ Client }} from \"crate:reqwest\";");
+    println!("  from crate:reqwest import Client;");
     Ok(())
 }
 
@@ -63,7 +63,7 @@ version = "0.1.0"
 edition = "2021"
 
 # Uncomment the Rust dependencies you need. Arcis uses them with
-# `import {{ ... }} from "crate:<name>";` and compiles with `cargo build`.
+# `from crate:<name> import ...;` and compiles with `cargo build`.
 #
 # [dependencies]
 # serde = {{ version = "1", features = ["derive"] }}
@@ -83,12 +83,13 @@ const INIT_MAIN_TSR: &str = r#"// main.tsr — entry point of your Arcis project
 //   arcis check   only generate Rust code without invoking rustc
 //
 // To import local modules, add other .tsr files in this directory and use
-// `import` with the same TypeScript syntax:
-//   import { add, PI } from "utils";
-//   import calculate from "utils";   // default export
+// Python-style imports:
+//   import utils;                          // namespace import
+//   from utils import add, PI;             // named imports
+//   from utils import default as calc;     // default import
 //
 // To use Rust crates, edit `Cargo.toml` and uncomment the deps:
-//   import { Client } from "crate:reqwest";
+//   from crate:reqwest import Client;
 
 print("Hello, Arcis!");
 "#;

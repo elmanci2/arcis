@@ -252,7 +252,7 @@ pub(crate) fn emit_stmt(
             Ok(())
         }
         Stmt::Function(_) => Ok(()),
-        Stmt::Import { .. } => {
+        Stmt::Import { .. } | Stmt::FromImport { .. } => {
             Err("imports are not yet supported by the Cranelift backend (Phase 4)".to_string())
         }
         Stmt::ExportDecl(inner) => emit_stmt(builder, fctx, inner, runtime, user_fns, module),

@@ -19,6 +19,7 @@ impl Parser {
             TokenKind::Const => self.parse_let(true),
             TokenKind::Function => self.parse_function(),
             TokenKind::Import => super::modules::parse_import(self),
+            TokenKind::From => super::modules::parse_from_import(self),
             TokenKind::Export => super::modules::parse_export(self),
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),

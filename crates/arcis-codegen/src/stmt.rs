@@ -57,7 +57,7 @@ pub(crate) fn emit(out: &mut String, stmt: &Stmt, level: usize, ctx: &Ctx) {
                 _ => {}
             }
         }
-        Stmt::Import { .. } | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {
+        Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {
             // Module structure (mod/use/pub) was emitted outside `emit_stmt`.
         }
     }

@@ -1,25 +1,22 @@
 //! Arcis linker / module resolver.
 //!
 //! Receives the entry point (by convention `main.tsr`) and resolves every
-//! transitive dependency declared via `import`, returning the complete
-//! program as an ordered list of modules.
+//! transitive dependency declared via `import` / `from ... import`, returning
+//! the complete program as an ordered list of modules.
 //!
-//! Path resolution: an `import` specifier (`from "utils"`) is interpreted
-//! relative to the directory of the importing file, looking for
-//! `<dir>/<specifier>.tsr` (no `./` prefix — Node/TS-style convenience).
+//! Path resolution: a module path `["utils"]` or `["lib", "utils"]` is
+//! interpreted relative to the directory of the importing file, looking for
+//! `<dir>/utils.tsr` or `<dir>/lib/utils.tsr`.
 //!
-//! The codegen emits one `.rs` per module, declaring `mod <id>;` from the
-//! root (`main`) and referencing items via `use crate::<id>::...`. Because of
-//! that:
-//!   - each `id` (= file stem) must be a valid Rust identifier;
-//!   - no two modules may share the same `id`.
+//! The `crate:` prefix on the first segment (e.g. `["crate:serde"]`) marks an
+//! external Rust crate — these are not loaded, only validated.
 
 use arcis_ast::{ExportDefault, Program, Stmt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// A loaded module: its id (= file stem), canonical path, AST, and the
-/// exports it offers (used by the codegen to emit `use crate::...`).
+/// exports it offers (used by the codegen to emit cross-module references).
 #[derive(Debug)]
 pub struct Module {
     pub id: String,
@@ -39,7 +36,7 @@ pub struct Exports {
     pub default: Option<String>,
 }
 
-/// What an `import ... from "<spec>"` resolves to:
+/// What an `import` / `from ... import` resolves to:
 /// - `Local`: a `.tsr` module in the same program, resolved relatively.
 /// - `Crate`: an external Rust crate declared with the `crate:` prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +67,6 @@ pub fn resolve(input: &Path) -> Result<Vec<Module>, String> {
 }
 
 /// Decide the entry file: directory → `<dir>/main.tsr`, file → as-is.
-/// Then canonicalize the path.
 fn resolve_entry(input: &Path) -> Result<PathBuf, String> {
     let candidate = if input.is_dir() {
         input.join("main.tsr")
@@ -88,8 +84,6 @@ fn resolve_entry(input: &Path) -> Result<PathBuf, String> {
 }
 
 /// DFS recursive loading: load `path`, resolve its imports, then load them.
-/// `modules` is keyed by canonical path (dedup); `order` records the
-/// pre-order discovery (entry first); `stack` detects cycles.
 fn load(
     path: &Path,
     modules: &mut HashMap<PathBuf, Module>,
@@ -128,8 +122,13 @@ fn load(
 
     // Resolve and load dependencies before recording the module.
     for stmt in &program.stmts {
-        if let Stmt::Import { module: spec, .. } = stmt {
-            match resolve_specifier(&canon, spec)? {
+        let module_path = match stmt {
+            Stmt::Import { module, .. } => Some(module),
+            Stmt::FromImport { module, .. } => Some(module),
+            _ => None,
+        };
+        if let Some(module_path) = module_path {
+            match resolve_specifier(&canon, module_path)? {
                 ModuleTarget::Local(dep) => load(&dep, modules, order, stack)?,
                 ModuleTarget::Crate(_) => {} // external crates are not loaded
             }
@@ -151,41 +150,50 @@ fn load(
     Ok(())
 }
 
-/// Resolve the specifier of an `import`.
-/// If it starts with `crate:`, returns `Crate(<name>)` without touching the FS.
-/// The name may contain `::` (e.g. `crate:reqwest::blocking`) to reach a
-/// sub-module of the crate. Otherwise, looks for `<dir>/<spec>.tsr`
-/// (canonicalized).
-pub fn resolve_specifier(importer: &Path, spec: &str) -> Result<ModuleTarget, String> {
-    if let Some(name) = spec.strip_prefix("crate:") {
+/// Convert a module path (`["utils"]` or `["lib", "utils"]`) to a filesystem
+/// path relative to the importing file's directory, looking for
+/// `<dir>/<seg0>/<seg1>/.../<segN>.tsr`.
+///
+/// If the first segment starts with `crate:`, returns `Crate(name)`.
+pub fn resolve_specifier(importer: &Path, segments: &[String]) -> Result<ModuleTarget, String> {
+    if segments.is_empty() {
+        return Err("empty module path".to_string());
+    }
+    let first = &segments[0];
+    if let Some(name) = first.strip_prefix("crate:") {
         if name.is_empty() {
-            return Err("empty Rust crate specifier (`from \"crate:\"`)".to_string());
+            return Err("empty Rust crate specifier (`crate:`)".to_string());
         }
-        return Ok(ModuleTarget::Crate(name.to_string()));
+        // Join remaining segments with `::` for Rust sub-module access.
+        let full = if segments.len() > 1 {
+            format!("{}::{}", name, &segments[1..].join("::"))
+        } else {
+            name.to_string()
+        };
+        return Ok(ModuleTarget::Crate(full));
     }
     let dir = importer.parent().ok_or_else(|| {
-        format!("could not determine the directory of `{}`", importer.display())
+        format!(
+            "could not determine the directory of `{}`",
+            importer.display()
+        )
     })?;
-    let candidate = dir.join(format!("{}.tsr", spec));
+    let mut candidate = dir.to_path_buf();
+    for seg in segments {
+        candidate.push(seg);
+    }
+    candidate.set_extension("tsr");
     match std::fs::canonicalize(&candidate) {
         Ok(p) => Ok(ModuleTarget::Local(p)),
         Err(_) => Err(format!(
             "module `{}` not found (looked at `{}`)",
-            spec,
+            segments.join("."),
             candidate.display()
         )),
     }
 }
 
-/// Return the Rust-compatible id of a module, derived from the file stem.
-///
-/// The id is what ends up as `mod <id>;` and the generated `<id>.rs` file
-/// name, so it must be a valid Rust identifier. If the file stem starts
-/// with a digit (e.g. `01_hello`) or contains a hyphen (e.g. `my-utils`),
-/// we prepend `_` until the first character is alphabetic or `_`, then
-/// replace any other invalid character with `_`. The file itself is
-/// untouched — only the id used inside the generated Rust code is
-/// sanitised.
+/// Return the id of a module, derived from the file stem.
 fn module_id(path: &Path) -> Result<String, String> {
     let stem = path
         .file_stem()
@@ -194,9 +202,7 @@ fn module_id(path: &Path) -> Result<String, String> {
     Ok(sanitize_module_id(stem))
 }
 
-/// Sanitise a string so it is a valid Rust identifier
-/// `[A-Za-z_][A-Za-z0-9_]*`. Prepends `_` until the first character is
-/// valid, then replaces any invalid character with `_`.
+/// Sanitise a string so it is a valid identifier.
 fn sanitize_module_id(stem: &str) -> String {
     if stem.is_empty() {
         return "_".into();
@@ -213,8 +219,6 @@ fn sanitize_module_id(stem: &str) -> String {
             out.push(c);
         } else if first {
             out.push('_');
-            // Re-evaluate this char in the non-first position so e.g. a
-            // digit that follows gets the normal treatment.
             if c.is_ascii_alphanumeric() {
                 out.push(c);
             } else {
@@ -228,8 +232,7 @@ fn sanitize_module_id(stem: &str) -> String {
     out
 }
 
-/// Verify that no two modules share the same id (which would clash in
-/// `mod <id>;` and in the generated `.rs` files).
+/// Verify that no two modules share the same id.
 fn check_unique_ids(modules: &HashMap<PathBuf, Module>) -> Result<(), String> {
     let mut seen: HashMap<String, PathBuf> = HashMap::new();
     for m in modules.values() {
@@ -289,52 +292,67 @@ pub fn default_real_name(ed: &ExportDefault) -> String {
     }
 }
 
-/// Verify that every `import` references exports that actually exist on the
+/// Verify that every import references exports that actually exist on the
 /// target module.
 fn validate_imports(modules: &HashMap<PathBuf, Module>) -> Result<(), String> {
     for m in modules.values() {
         for stmt in &m.program.stmts {
-            if let Stmt::Import { default, named, module: spec } = stmt {
-                let target = resolve_specifier(&m.path, spec)?;
-                match target {
-                    ModuleTarget::Crate(_) => {
-                        // External Rust crates are validated by `rustc`. We
-                        // only reject the `default import` form here.
-                        if default.is_some() {
-                            return Err(format!(
-                                "`import x from \"crate:{}\"` is unsupported: \
-                                 Rust crates have no `default export`",
-                                spec.strip_prefix("crate:").unwrap_or(spec)
-                            ));
-                        }
+            match stmt {
+                Stmt::Import { module, .. } => {
+                    // Namespace imports just need the module to exist — already
+                    // checked during load. But we still verify the target.
+                    validate_target(modules, &m.path, module)?;
+                }
+                Stmt::FromImport {
+                    module,
+                    names,
+                    wildcard,
+                } => {
+                    let target = validate_target(modules, &m.path, module)?;
+                    if *wildcard {
+                        continue; // wildcard imports everything — always valid
                     }
-                    ModuleTarget::Local(dep_path) => {
-                        let target_mod = modules.get(&dep_path).ok_or_else(|| {
-                            format!("module `{}` was not loaded (internal error)", spec)
-                        })?;
-
-                        if let Some(_local) = default {
-                            if target_mod.exports.default.is_none() {
-                                return Err(format!(
-                                    "`{}` does not export a default value",
-                                    spec
-                                ));
-                            }
+                    match target {
+                        ModuleTarget::Crate(_) => {
+                            // External Rust crates are validated by `rustc`.
                         }
-                        for n in named {
-                            if !target_mod.exports.named.contains(&n.name) {
-                                return Err(format!(
-                                    "`{}` does not export a symbol named `{}`",
-                                    spec, n.name
-                                ));
+                        ModuleTarget::Local(dep_path) => {
+                            let target_mod = modules.get(&dep_path).ok_or_else(|| {
+                                format!(
+                                    "module `{}` was not loaded (internal error)",
+                                    module.join(".")
+                                )
+                            })?;
+                            for n in names {
+                                if !target_mod.exports.named.contains(&n.name) {
+                                    return Err(format!(
+                                        "`{}` does not export a symbol named `{}`",
+                                        module.join("."),
+                                        n.name
+                                    ));
+                                }
                             }
                         }
                     }
                 }
+                _ => {}
             }
         }
     }
     Ok(())
+}
+
+/// Resolve the module target and verify it exists (for namespace imports).
+fn validate_target(
+    modules: &HashMap<PathBuf, Module>,
+    importer: &Path,
+    module: &[String],
+) -> Result<ModuleTarget, String> {
+    resolve_specifier(importer, module).map_err(|e| {
+        // If it was already loaded, the error from resolve_specifier
+        // won't fire because we're just re-validating.
+        e
+    })
 }
 
 #[cfg(test)]
@@ -343,16 +361,16 @@ mod tests {
 
     #[test]
     fn module_id_accepts_valid_identifiers() {
-        assert!(module_id(Path::new("/tmp/utils.tsr")).is_ok());
         assert_eq!(module_id(Path::new("/tmp/utils.tsr")).unwrap(), "utils");
     }
 
     #[test]
     fn module_id_sanitises_invalid() {
-        // Hyphens are replaced by underscores; the function never errors.
         assert_eq!(module_id(Path::new("/tmp/my-mod.tsr")).unwrap(), "my_mod");
-        assert_eq!(module_id(Path::new("/tmp/2starts.tsr")).unwrap(), "_2starts");
-        // Hyphens mixed with digits and underscores.
+        assert_eq!(
+            module_id(Path::new("/tmp/2starts.tsr")).unwrap(),
+            "_2starts"
+        );
         assert_eq!(
             module_id(Path::new("/tmp/01-hello_world.tsr")).unwrap(),
             "_01_hello_world"

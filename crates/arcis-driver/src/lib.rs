@@ -31,9 +31,9 @@ mod rustc;
 /// Which codegen backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
-    /// Default: lower AST to Rust source, then invoke `rustc`/`cargo`.
+    /// Lower AST to Rust source, then invoke `rustc`/`cargo`.
     Rust,
-    /// Lower AST directly to Cranelift IR; link via `cc` against the
+    /// Default: lower AST directly to Cranelift IR; link via `cc` against the
     /// bundled C runtime. Does **not** depend on `rustc` being installed.
     Cranelift,
 }
@@ -62,7 +62,7 @@ impl Backend {
 
 impl Default for Backend {
     fn default() -> Self {
-        Backend::Rust
+        Backend::Cranelift
     }
 }
 

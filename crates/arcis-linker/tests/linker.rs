@@ -60,7 +60,7 @@ fn resolves_multi_file_program_via_imports() {
     .expect("write utils.tsr");
     fs::write(
         tmp.path().join("main.tsr"),
-        "import { greet } from \"utils\";\nprint(greet());\n",
+        "from utils import greet;\nprint(greet());\n",
     )
     .expect("write main.tsr");
 
@@ -77,7 +77,7 @@ fn flags_missing_import_target() {
     let tmp = TempDir::new();
     fs::write(
         tmp.path().join("main.tsr"),
-        "import { missing } from \"doesnotexist\";\n",
+        "from doesnotexist import missing;\n",
     )
     .expect("write main.tsr");
 
@@ -90,17 +90,17 @@ fn flags_cyclic_dependencies() {
     let tmp = TempDir::new();
     fs::write(
         tmp.path().join("a.tsr"),
-        "import { f } from \"b\";\nexport function g() { return 1; }\n",
+        "from b import f;\nexport function g() { return 1; }\n",
     )
     .expect("write a.tsr");
     fs::write(
         tmp.path().join("b.tsr"),
-        "import { g } from \"a\";\nexport function f() { return 2; }\n",
+        "from a import g;\nexport function f() { return 2; }\n",
     )
     .expect("write b.tsr");
     fs::write(
         tmp.path().join("main.tsr"),
-        "import { g } from \"a\";\nprint(\"ok\");\n",
+        "from a import g;\nprint(\"ok\");\n",
     )
     .expect("write main.tsr");
 
@@ -109,26 +109,39 @@ fn flags_cyclic_dependencies() {
 }
 
 #[test]
-fn sanitises_invalid_module_names() {
+fn resolves_namespace_import() {
     let tmp = TempDir::new();
-    // Hyphens and leading digits are not valid Rust identifiers; the
-    // linker sanitises them so users can name their files however they
-    // like. `my-utils` becomes `my_utils` internally.
     fs::write(
-        tmp.path().join("my-utils.tsr"),
+        tmp.path().join("utils.tsr"),
         "export const X = 1;\n",
     )
-    .expect("write my-utils.tsr");
+    .expect("write utils.tsr");
     fs::write(
         tmp.path().join("main.tsr"),
-        "import { X } from \"my-utils\";\n",
+        "import utils;\nprint(utils.X);\n",
     )
     .expect("write main.tsr");
 
-    let modules = resolve(tmp.path()).expect("hyphenated names must be sanitised");
-    let utils_mod = modules
-        .iter()
-        .find(|m| m.path.file_name().is_some_and(|f| f == "my-utils.tsr"))
-        .expect("utils module loaded");
-    assert_eq!(utils_mod.id, "my_utils");
+    let modules = resolve(tmp.path()).expect("namespace import must succeed");
+    assert_eq!(modules.len(), 2);
+    assert_eq!(modules[0].id, "main");
+    assert!(modules.iter().any(|m| m.id == "utils"));
+}
+
+#[test]
+fn resolves_from_import_wildcard() {
+    let tmp = TempDir::new();
+    fs::write(
+        tmp.path().join("lib.tsr"),
+        "export const A = 1;\nexport const B = 2;\n",
+    )
+    .expect("write lib.tsr");
+    fs::write(
+        tmp.path().join("main.tsr"),
+        "from lib import *;\nprint(A + B);\n",
+    )
+    .expect("write main.tsr");
+
+    let modules = resolve(tmp.path()).expect("wildcard import must succeed");
+    assert_eq!(modules.len(), 2);
 }

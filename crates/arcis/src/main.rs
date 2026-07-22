@@ -13,10 +13,10 @@
 //!
 //! ## Backends
 //!
-//! - `rust` (default): lower to Rust source, compile with `rustc`/`cargo`.
+//! - `cranelift` (default): lower directly to Cranelift IR, link with the
+//!   system `cc` against `libc`. **Does not** require a Rust toolchain.
+//! - `rust`: lower to Rust source, compile with `rustc`/`cargo`.
 //!   Requires a Rust toolchain installed.
-//! - `cranelift`: lower directly to Cranelift IR, link with the system `cc`
-//!   against `libc`. **Does not** require a Rust toolchain.
 
 use std::fs;
 use std::path::PathBuf;
@@ -42,16 +42,16 @@ enum Commands {
     Build {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `rust` (default, needs rustc) or `cranelift` (no rustc needed).
-        #[arg(long, value_name = "BACKEND", default_value = "rust")]
+        /// Codegen backend: `cranelift` (default, no rustc needed) or `rust` (needs rustc).
+        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
         backend: String,
     },
     /// Compile and execute the binary
     Run {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `rust` (default, needs rustc) or `cranelift` (no rustc needed).
-        #[arg(long, value_name = "BACKEND", default_value = "rust")]
+        /// Codegen backend: `cranelift` (default, no rustc needed) or `rust` (needs rustc).
+        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
         backend: String,
     },
     /// Only emit the source files (without invoking the final compiler) and
@@ -59,8 +59,8 @@ enum Commands {
     Check {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `rust` (default) or `cranelift` (dumps Cranelift IR).
-        #[arg(long, value_name = "BACKEND", default_value = "rust")]
+        /// Codegen backend: `cranelift` (default) or `rust` (dumps Rust source).
+        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
         backend: String,
     },
     /// Initialise a new Arcis project (creates `main.tsr` with a "Hello"

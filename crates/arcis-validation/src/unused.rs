@@ -94,7 +94,7 @@ pub(crate) fn collect_uses(stmt: &Stmt, used: &mut HashSet<String>) {
             }
         }
         Stmt::Break | Stmt::Continue => {}
-        Stmt::Import { .. } | Stmt::ExportDecl(_) | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {}
+        Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportDecl(_) | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {}
         Stmt::Expr(expr) => collect_uses_expr(expr, used),
     }
 }

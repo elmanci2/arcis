@@ -87,27 +87,92 @@ fn parses_named_function() {
 }
 
 #[test]
-fn parses_named_import() {
-    let stmts = parse("import { add } from \"utils\";");
+fn parses_namespace_import() {
+    let stmts = parse("import utils;");
     match &stmts[0] {
-        Stmt::Import { named, module, .. } => {
-            assert_eq!(module, "utils");
-            assert_eq!(named.len(), 1);
-            assert_eq!(named[0].name, "add");
+        Stmt::Import { module, alias } => {
+            assert_eq!(module, &["utils"]);
+            assert_eq!(alias, &None);
         }
         _ => panic!("expected Stmt::Import"),
     }
 }
 
 #[test]
-fn parses_default_import() {
-    let stmts = parse("import compute from \"utils\";");
+fn parses_namespace_import_with_alias() {
+    let stmts = parse("import utils as u;");
     match &stmts[0] {
-        Stmt::Import { default, named, .. } => {
-            assert_eq!(default.as_deref(), Some("compute"));
-            assert!(named.is_empty());
+        Stmt::Import { module, alias } => {
+            assert_eq!(module, &["utils"]);
+            assert_eq!(alias.as_deref(), Some("u"));
         }
         _ => panic!("expected Stmt::Import"),
+    }
+}
+
+#[test]
+fn parses_dotted_import() {
+    let stmts = parse("import os.path;");
+    match &stmts[0] {
+        Stmt::Import { module, .. } => {
+            assert_eq!(module, &["os", "path"]);
+        }
+        _ => panic!("expected Stmt::Import"),
+    }
+}
+
+#[test]
+fn parses_from_import_single() {
+    let stmts = parse("from utils import add;");
+    match &stmts[0] {
+        Stmt::FromImport { module, names, wildcard } => {
+            assert_eq!(module, &["utils"]);
+            assert!(!wildcard);
+            assert_eq!(names.len(), 1);
+            assert_eq!(names[0].name, "add");
+            assert_eq!(names[0].alias, None);
+        }
+        _ => panic!("expected Stmt::FromImport"),
+    }
+}
+
+#[test]
+fn parses_from_import_multiple() {
+    let stmts = parse("from utils import add, sub as subtract;");
+    match &stmts[0] {
+        Stmt::FromImport { module, names, wildcard } => {
+            assert_eq!(module, &["utils"]);
+            assert!(!wildcard);
+            assert_eq!(names.len(), 2);
+            assert_eq!(names[0].name, "add");
+            assert_eq!(names[1].name, "sub");
+            assert_eq!(names[1].alias.as_deref(), Some("subtract"));
+        }
+        _ => panic!("expected Stmt::FromImport"),
+    }
+}
+
+#[test]
+fn parses_from_import_wildcard() {
+    let stmts = parse("from utils import *;");
+    match &stmts[0] {
+        Stmt::FromImport { module, wildcard, .. } => {
+            assert_eq!(module, &["utils"]);
+            assert!(wildcard);
+        }
+        _ => panic!("expected Stmt::FromImport"),
+    }
+}
+
+#[test]
+fn parses_from_import_dotted() {
+    let stmts = parse("from os.path import join;");
+    match &stmts[0] {
+        Stmt::FromImport { module, names, .. } => {
+            assert_eq!(module, &["os", "path"]);
+            assert_eq!(names[0].name, "join");
+        }
+        _ => panic!("expected Stmt::FromImport"),
     }
 }
 

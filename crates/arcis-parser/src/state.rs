@@ -78,4 +78,13 @@ impl Parser {
             })
         }
     }
+
+    /// Consume an identifier token and return its name string.
+    pub(crate) fn expect_ident(&mut self, context: &str) -> Result<String, ParseError> {
+        let tok = self.expect(&TokenKind::Ident(String::new()), context)?;
+        match tok.kind {
+            TokenKind::Ident(s) => Ok(s),
+            _ => unreachable!(),
+        }
+    }
 }

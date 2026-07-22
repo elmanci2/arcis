@@ -1,9 +1,17 @@
-//! Module parsing: `import` and `export`.
+//! Module parsing: `import` and `export` (Python-style).
 //!
-//! Both statements follow TypeScript / ES-module syntax:
-//! - `import [def,] { a, b as c } from "mod";`
-//! - `export default ...` / `export { a, b as c }` /
-//!   `export function/const/let ...`
+//! Imports:
+//! - `import utils`                 → namespace import
+//! - `import utils as u`            → namespace import with alias
+//! - `import os.path`              → dotted module path
+//! - `from utils import a`         → single named import
+//! - `from utils import a, b as c` → multiple named imports
+//! - `from utils import *`         → wildcard import
+//!
+//! Exports (unchanged from ES-module style):
+//! - `export function f(){}` / `export const X = ...` / `export let Y = ...`
+//! - `export { a, b as c };`
+//! - `export default ...`
 
 use arcis_ast::{ExportDefault, ExportItem, ImportNamed, Stmt};
 use arcis_lexer::TokenKind;
@@ -11,71 +19,82 @@ use arcis_lexer::TokenKind;
 use crate::error::ParseError;
 use crate::state::Parser;
 
-/// `import [def,] { a, b as c } from "mod";`
-/// At least one of `def` or the named list must be present.
+/// Parse a dotted module path: `IDENT (. IDENT)*`.
+/// Returns the list of path segments.
+fn parse_module_path(p: &mut Parser) -> Result<Vec<String>, ParseError> {
+    let first = p.expect_ident("module name")?;
+    let mut path = vec![first];
+    while p.matches(&TokenKind::Dot) {
+        let next = p.expect_ident("module name after `.`")?;
+        path.push(next);
+    }
+    Ok(path)
+}
+
+/// `import IDENT (. IDENT)* (as IDENT)? ;`
 pub(crate) fn parse_import(p: &mut Parser) -> Result<Stmt, ParseError> {
     p.advance(); // import
 
-    let mut default: Option<String> = None;
-    let mut named: Vec<ImportNamed> = Vec::new();
+    let module = parse_module_path(p)?;
 
-    // Default binding: identifier followed by `,` or `from`.
-    if let TokenKind::Ident(_) = p.peek_kind() {
-        let after = p.peek_at(1).map(|t| &t.kind);
-        if matches!(after, Some(TokenKind::From) | Some(TokenKind::Comma)) {
-            let tok = p.advance();
-            if let TokenKind::Ident(s) = tok.kind {
-                default = Some(s);
-            }
-        }
-    }
+    let alias = if p.matches(&TokenKind::As) {
+        Some(p.expect_ident("alias after `as`")?)
+    } else {
+        None
+    };
 
-    // Optional `,` separator between default and the named list.
-    if default.is_some() {
-        p.matches(&TokenKind::Comma);
-    }
+    p.expect(&TokenKind::Semi, "`;` after `import`")?;
+    Ok(Stmt::Import { module, alias })
+}
 
-    // Named list: `{ a, b as c }`
-    if p.matches(&TokenKind::LBrace) {
-        if !p.check(&TokenKind::RBrace) {
-            loop {
-                let name_tok = p.expect(&TokenKind::Ident(String::new()), "name in import")?;
-                let name = match name_tok.kind {
-                    TokenKind::Ident(s) => s,
-                    _ => unreachable!(),
-                };
-                let alias = if p.matches(&TokenKind::As) {
-                    let a = p.expect(&TokenKind::Ident(String::new()), "name after `as`")?;
-                    match a.kind {
-                        TokenKind::Ident(s) => Some(s),
-                        _ => unreachable!(),
-                    }
-                } else {
-                    None
-                };
-                named.push(ImportNamed { name, alias });
-                if !p.matches(&TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-        p.expect(&TokenKind::RBrace, "`}` closing import list")?;
-    }
+/// `from IDENT (. IDENT)* import names ;`
+pub(crate) fn parse_from_import(p: &mut Parser) -> Result<Stmt, ParseError> {
+    p.advance(); // from
 
-    if default.is_none() && named.is_empty() {
-        let t = p.peek();
-        return Err(ParseError {
-            line: t.line,
-            col: t.col,
-            msg: "an `import` must have at least one binding (default or named)".to_string(),
+    let module = parse_module_path(p)?;
+
+    p.expect(
+        &TokenKind::Import,
+        "`import` after module path in `from ... import`",
+    )?;
+
+    // Wildcard: `from utils import * ;`
+    if p.matches(&TokenKind::Star) {
+        p.expect(&TokenKind::Semi, "`;` after `from ... import *`")?;
+        return Ok(Stmt::FromImport {
+            module,
+            names: vec![],
+            wildcard: true,
         });
     }
 
-    p.expect(&TokenKind::From, "`from` after import bindings")?;
-    let module = p.expect_string_literal("module path")?;
-    p.expect(&TokenKind::Semi, "`;` after `import`")?;
+    // Named list: `IDENT (as IDENT)? (, IDENT (as IDENT)?)*`
+    let mut names = Vec::new();
 
-    Ok(Stmt::Import { default, named, module })
+    let name = p.expect_ident("name after `import`")?;
+    let alias = if p.matches(&TokenKind::As) {
+        Some(p.expect_ident("alias after `as`")?)
+    } else {
+        None
+    };
+    names.push(ImportNamed { name, alias });
+
+    while p.matches(&TokenKind::Comma) {
+        let name = p.expect_ident("name after `,`")?;
+        let alias = if p.matches(&TokenKind::As) {
+            Some(p.expect_ident("alias after `as`")?)
+        } else {
+            None
+        };
+        names.push(ImportNamed { name, alias });
+    }
+
+    p.expect(&TokenKind::Semi, "`;` after `from ... import`")?;
+    Ok(Stmt::FromImport {
+        module,
+        names,
+        wildcard: false,
+    })
 }
 
 /// `export default ... | export { ... } | export function/const/let ...`
@@ -99,13 +118,17 @@ pub(crate) fn parse_export(p: &mut Parser) -> Result<Stmt, ParseError> {
         let mut items = Vec::new();
         if !p.check(&TokenKind::RBrace) {
             loop {
-                let name_tok = p.expect(&TokenKind::Ident(String::new()), "name in export")?;
+                let name_tok =
+                    p.expect(&TokenKind::Ident(String::new()), "name in export")?;
                 let name = match name_tok.kind {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
                 };
                 let alias = if p.matches(&TokenKind::As) {
-                    let a = p.expect(&TokenKind::Ident(String::new()), "name after `as`")?;
+                    let a = p.expect(
+                        &TokenKind::Ident(String::new()),
+                        "name after `as`",
+                    )?;
                     match a.kind {
                         TokenKind::Ident(s) => Some(s),
                         _ => unreachable!(),
@@ -144,7 +167,8 @@ pub(crate) fn parse_export(p: &mut Parser) -> Result<Stmt, ParseError> {
                 line: t.line,
                 col: t.col,
                 msg: format!(
-                    "invalid export: expected `default`, `{{`, `function`, `const`, or `let`, found {}",
+                    "invalid export: expected `default`, `{{`, `function`, \
+                     `const`, or `let`, found {}",
                     other
                 ),
             })

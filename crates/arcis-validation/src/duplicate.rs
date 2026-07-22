@@ -84,6 +84,7 @@ pub(crate) fn collect_decl(
         | Stmt::Continue
         | Stmt::ForOf { .. }
         | Stmt::Import { .. }
+        | Stmt::FromImport { .. }
         | Stmt::ExportDecl(_)
         | Stmt::ExportSpec(_)
         | Stmt::ExportDefault(_)

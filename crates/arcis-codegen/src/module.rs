@@ -91,8 +91,7 @@ pub(crate) fn generate(
     Ok(out)
 }
 
-/// `use crate::<id>::<name> [as <local>];` for each imported binding.
-/// For external crates (`crate:<name>`), emit `use <crate>::<name>;`.
+/// Emit Rust `use` statements for all import declarations.
 fn emit_imports(
     out: &mut String,
     program: &Program,
@@ -101,53 +100,92 @@ fn emit_imports(
     path_to_id: &HashMap<std::path::PathBuf, String>,
 ) -> Result<(), String> {
     for stmt in &program.stmts {
-        if let Stmt::Import { default, named, module: spec } = stmt {
-            match resolve_specifier(importer_path, spec)? {
-                ModuleTarget::Crate(crate_name) => {
-                    // The linker already rejected `default.is_some()` for crates.
-                    for n in named {
-                        let local = n.alias.clone().unwrap_or_else(|| n.name.clone());
-                        if local == n.name {
-                            out.push_str(&format!("use {}::{};\n", crate_name, n.name));
-                        } else {
-                            out.push_str(&format!(
-                                "use {}::{} as {};\n",
-                                crate_name, n.name, local
-                            ));
-                        }
-                    }
-                }
-                ModuleTarget::Local(dep_path) => {
-                    let dep_id = path_to_id.get(&dep_path).ok_or_else(|| {
-                        format!("module `{}` not resolved to an id (internal error)", spec)
-                    })?;
-                    if let Some(local) = default {
-                        let target = modules
-                            .iter()
-                            .find(|m| m.path == dep_path)
-                            .expect("target module loaded");
-                        let default_name =
-                            target.exports.default.clone().ok_or_else(|| {
-                                format!("`{}` has no default export", spec)
-                            })?;
+        match stmt {
+            // `import utils [as u]` — namespace import
+            Stmt::Import { module, alias } => {
+                match resolve_specifier(importer_path, module)? {
+                    ModuleTarget::Crate(crate_name) => {
+                        let local = alias
+                            .clone()
+                            .unwrap_or_else(|| crate_name.replace("::", "_"));
                         out.push_str(&format!(
-                            "use crate::{}::{} as {};\n",
-                            dep_id, default_name, local
+                            "use {} as {};\n",
+                            crate_name, local
                         ));
                     }
-                    for n in named {
-                        let local = n.alias.clone().unwrap_or_else(|| n.name.clone());
-                        if local == n.name {
-                            out.push_str(&format!("use crate::{}::{};\n", dep_id, n.name));
+                    ModuleTarget::Local(dep_path) => {
+                        let dep_id = path_to_id.get(&dep_path).ok_or_else(|| {
+                            format!(
+                                "module `{}` not resolved to an id (internal error)",
+                                module.join(".")
+                            )
+                        })?;
+                        let local = alias.clone().unwrap_or_else(|| dep_id.clone());
+                        out.push_str(&format!(
+                            "use crate::{} as {};\n",
+                            dep_id, local
+                        ));
+                    }
+                }
+            }
+            // `from utils import a, b as c` or `from utils import *`
+            Stmt::FromImport {
+                module,
+                names,
+                wildcard,
+            } => {
+                match resolve_specifier(importer_path, module)? {
+                    ModuleTarget::Crate(crate_name) => {
+                        if *wildcard {
+                            out.push_str(&format!("use {}::*;\n", crate_name));
                         } else {
-                            out.push_str(&format!(
-                                "use crate::{}::{} as {};\n",
-                                dep_id, n.name, local
-                            ));
+                            for n in names {
+                                let local =
+                                    n.alias.clone().unwrap_or_else(|| n.name.clone());
+                                if local == n.name {
+                                    out.push_str(&format!(
+                                        "use {}::{};\n",
+                                        crate_name, n.name
+                                    ));
+                                } else {
+                                    out.push_str(&format!(
+                                        "use {}::{} as {};\n",
+                                        crate_name, n.name, local
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    ModuleTarget::Local(dep_path) => {
+                        let dep_id = path_to_id.get(&dep_path).ok_or_else(|| {
+                            format!(
+                                "module `{}` not resolved to an id (internal error)",
+                                module.join(".")
+                            )
+                        })?;
+                        if *wildcard {
+                            out.push_str(&format!("use crate::{}::*;\n", dep_id));
+                        } else {
+                            for n in names {
+                                let local =
+                                    n.alias.clone().unwrap_or_else(|| n.name.clone());
+                                if local == n.name {
+                                    out.push_str(&format!(
+                                        "use crate::{}::{};\n",
+                                        dep_id, n.name
+                                    ));
+                                } else {
+                                    out.push_str(&format!(
+                                        "use crate::{}::{} as {};\n",
+                                        dep_id, n.name, local
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
             }
+            _ => {}
         }
     }
     Ok(())

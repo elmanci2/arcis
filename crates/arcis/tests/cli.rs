@@ -154,7 +154,7 @@ fn check_prints_generated_root_module() {
     let main = s.write("main.tsr", "print(\"hi\");\n");
     let out = s
         .cmd()
-        .args(["check", main.to_str().unwrap()])
+        .args(["check", "--backend", "rust", main.to_str().unwrap()])
         .output()
         .expect("spawn arcis");
     assert!(out.status.success(), "check must succeed");
@@ -225,7 +225,7 @@ fn build_emits_arcis_generated_rs_files() {
     let main = s.write("main.tsr", "let x: number = 42; print(x);\n");
     let status = s
         .cmd()
-        .args(["build", main.to_str().unwrap()])
+        .args(["build", "--backend", "rust", main.to_str().unwrap()])
         .status()
         .expect("spawn arcis");
     assert!(status.success());
@@ -303,14 +303,18 @@ fn multi_module_build_uses_cargo_layout_when_cargo_toml_present() {
     );
     s.write(
         "main.tsr",
-        "import { greet } from \"utils\";\nprint(greet());\n",
+        "from utils import greet;\nprint(greet());\n",
     );
     s.write(
         "Cargo.toml",
         "[package]\nname = \"multi\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     );
 
-    let status = s.cmd().args(["run"]).status().expect("spawn arcis");
+    let status = s
+        .cmd()
+        .args(["run", "--backend", "rust"])
+        .status()
+        .expect("spawn arcis");
     assert!(status.success(), "run on the multi-module project must succeed");
 
     // The Cargo-mode build places the generated project under

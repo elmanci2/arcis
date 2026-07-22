@@ -78,7 +78,7 @@ fn collect_in_stmt(stmt: &Stmt, set: &mut HashSet<String>) {
                 collect_in_stmt(s, set);
             }
         }
-        Stmt::Import { .. } | Stmt::ExportSpec(_) => {}
+        Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportSpec(_) => {}
         Stmt::ExportDecl(inner) => collect_in_stmt(inner, set),
         Stmt::ExportDefault(ed) => match ed {
             ExportDefault::Function(f) => {
@@ -184,6 +184,7 @@ fn collect_types_stmt(stmt: &Stmt, map: &mut HashMap<String, String>) {
         }
         Stmt::ExportDefault(ExportDefault::Expr(_))
         | Stmt::Import { .. }
+        | Stmt::FromImport { .. }
         | Stmt::ExportSpec(_) => {}
         _ => {}
     }
@@ -300,7 +301,7 @@ fn collect_object_types_stmt(stmt: &Stmt, seen: &mut HashSet<String>, out: &mut 
                 collect_object_types_stmt(s, seen, out);
             }
         }
-        Stmt::ExportDefault(ExportDefault::Expr(_)) | Stmt::Import { .. } | Stmt::ExportSpec(_) => {}
+        Stmt::ExportDefault(ExportDefault::Expr(_)) | Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportSpec(_) => {}
         _ => {}
     }
 }

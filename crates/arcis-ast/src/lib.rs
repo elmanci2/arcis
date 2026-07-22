@@ -127,12 +127,17 @@ pub enum Stmt {
     Continue,
     Expr(Expr),
 
-    // Modules (ES modules / TS).
-    /// `import [def,] { a, b as c } from "mod";`
+    // Modules (Python-style).
+    /// `import utils` or `import utils as u`
     Import {
-        default: Option<String>,
-        named: Vec<ImportNamed>,
-        module: String,
+        module: Vec<String>,
+        alias: Option<String>,
+    },
+    /// `from utils import a, b as c` or `from utils import *`
+    FromImport {
+        module: Vec<String>,
+        names: Vec<ImportNamed>,
+        wildcard: bool,
     },
     /// `export function f(){}` / `export const X = ...;` / `export let Y = ...;`
     ExportDecl(Box<Stmt>),

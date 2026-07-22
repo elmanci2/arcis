@@ -193,12 +193,11 @@ fn write_rustc_layout(
 /// Returns `true` if any module imports a specifier with the `crate:` prefix.
 fn has_crate_import(modules: &[Module]) -> bool {
     modules.iter().any(|m| {
-        m.program.stmts.iter().any(|s| {
-            if let Stmt::Import { module: spec, .. } = s {
-                spec.starts_with("crate:")
-            } else {
-                false
+        m.program.stmts.iter().any(|s| match s {
+            Stmt::Import { module, .. } | Stmt::FromImport { module, .. } => {
+                module.first().map_or(false, |seg| seg.starts_with("crate:"))
             }
+            _ => false,
         })
     })
 }

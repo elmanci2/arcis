@@ -1,14 +1,11 @@
 // arcis-std: top-level entry point.
 //
 // Re-exports the contents of every other module in the standard library so
-// `import { trim, sum } from "std";` works without forcing users to learn the
+// `from std import trim, sum` works without forcing users to learn the
 // internal layout.
-//
-// Wiring this into the driver is part of phase 2 — once the driver learns
-// to embed this crate's `.tsr` sources via `include_str!`.
 
-import { trim, upper, lower } from "strings";
-import { sum, average } from "arrays";
-import { PI, E } from "math";
+from strings import trim, upper, lower;
+from arrays import sum, average;
+from math import PI, E;
 
 export { trim, upper, lower, sum, average, PI, E };

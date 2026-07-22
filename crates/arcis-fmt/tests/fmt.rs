@@ -178,7 +178,7 @@ fn output_parses_clean() {
         "function f(x: number): number { return x + 1; }\n",
         "if (x > 0) { print(\"pos\"); }\n",
         "for (let v of arr) { print(v); }\n",
-        "import { trim } from \"std\";\n",
+        "from std import trim;\n",
         "let p: { name: string } = { name: \"x\" };\n",
     ];
     for s in &samples {

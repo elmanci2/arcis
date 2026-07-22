@@ -1,152 +1,192 @@
 //! Cranelift declarations for every external function the lowered Arcis
-//! program calls into. All of these live in [`crate::runtime::RUNTIME_C_SOURCE`]
-//! (a `.c` file the driver compiles separately).
-//!
-//! Each field is a Cranelift `FuncId` — when we want to *call* the runtime
-//! from inside a Cranelift function body, we look it up with
-//! `module.declare_func_in_func(func_id, builder.func)` which gives us the
-//! `FuncRef` to pass to `builder.ins().call(...)`.
+//! program calls into. All of these live in [`crate::runtime::RUNTIME_C_SOURCE`].
 
 use cranelift_codegen::ir::types::{F64, I32, I64};
 use cranelift_codegen::ir::{AbiParam, Signature, Type};
 use cranelift_module::{FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-/// One-`FuncId`-per-runtime-function struct, declared once per module.
 pub(crate) struct Runtime {
-    // Phase 1: strings, printing, numbers.
-    pub string_from_cstr: FuncId,
-    pub string_concat: FuncId,
-    pub string_eq: FuncId,
-    pub string_drop: FuncId,
-    pub print: FuncId,
-    pub println: FuncId,
-    pub num_to_string: FuncId,
-    pub bool_to_string: FuncId,
-
-    // Phase 2: string methods.
-    pub string_to_uppercase: FuncId,
-    pub string_to_lowercase: FuncId,
-    pub string_trim: FuncId,
-    pub string_substring: FuncId,
-    pub string_index_of: FuncId,
-    pub string_includes: FuncId,
-    pub string_char_at: FuncId,
-
-    // Phase 2: I/O.
+    // Phase 1-2: strings, printing, numbers, arrays, objects, methods.
+    pub string_from_cstr: FuncId, pub string_concat: FuncId, pub string_eq: FuncId,
+    pub string_drop: FuncId, pub print: FuncId, pub println: FuncId,
+    pub num_to_string: FuncId, pub bool_to_string: FuncId,
+    pub string_to_uppercase: FuncId, pub string_to_lowercase: FuncId,
+    pub string_trim: FuncId, pub string_substring: FuncId,
+    pub string_index_of: FuncId, pub string_includes: FuncId, pub string_char_at: FuncId,
     pub read_line: FuncId,
-
-    // Phase 2: arrays.
-    pub vec_new: FuncId,
-    pub vec_push: FuncId,
-    pub vec_pop: FuncId,
-    pub vec_unshift: FuncId,
-    pub vec_len: FuncId,
-    pub vec_get: FuncId,
-    pub vec_set: FuncId,
-    #[allow(dead_code)]
+    pub vec_new: FuncId, pub vec_push: FuncId, pub vec_pop: FuncId, pub vec_unshift: FuncId,
+    pub vec_len: FuncId, pub vec_get: FuncId, pub vec_set: FuncId,
     pub vec_drop: FuncId,
+    pub object_new: FuncId, pub object_set: FuncId, pub object_get: FuncId, pub object_drop: FuncId,
 
-    // Phase 2: objects.
-    pub object_new: FuncId,
-    pub object_set: FuncId,
-    pub object_get: FuncId,
-    #[allow(dead_code)]
-    pub object_drop: FuncId,
+    // Phase 5: sys.* — filesystem.
+    pub fs_read_file: FuncId, pub fs_write_file: FuncId,
+    pub fs_read_bytes: FuncId, pub fs_write_bytes: FuncId,
+    pub fs_append_file: FuncId, pub fs_create_file: FuncId,
+    pub fs_delete_file: FuncId, pub fs_delete_dir: FuncId, pub fs_delete_dir_all: FuncId,
+    pub fs_mkdir: FuncId, pub fs_list_dir: FuncId,
+    pub fs_copy: FuncId, pub fs_move: FuncId,
+
+    // Phase 5: sys.* — path.
+    pub path_exists: FuncId, pub path_is_file: FuncId, pub path_is_dir: FuncId,
+    pub path_file_size: FuncId, pub path_file_info: FuncId,
+    pub path_absolute: FuncId,
+
+    // Phase 5: sys.* — process env.
+    pub proc_current_dir: FuncId, pub proc_change_dir: FuncId,
+    pub proc_temp_dir: FuncId, pub proc_home_dir: FuncId, pub proc_executable_path: FuncId,
+
+    // Phase 5: sys.* — process management.
+    pub process_current_pid: FuncId, pub process_parent_pid: FuncId,
+    pub process_exec: FuncId, pub process_run: FuncId,
+    pub process_spawn: FuncId, pub process_kill: FuncId, pub process_list: FuncId,
+
+    // Phase 5: sys.* — env vars.
+    pub env_get: FuncId, pub env_set: FuncId, pub env_delete: FuncId, pub env_all: FuncId,
+
+    // Phase 5: sys.* — OS info.
+    pub os_name: FuncId, pub os_version: FuncId, pub os_arch: FuncId,
+    pub os_hostname: FuncId, pub os_username: FuncId, pub os_uptime: FuncId,
+    pub os_locale: FuncId, pub os_cpu_count: FuncId,
+
+    // Phase 5: sys.* — memory, cpu, gpu, disk, net.
+    pub memory_total: FuncId, pub memory_free: FuncId, pub memory_used: FuncId, pub memory_available: FuncId,
+    pub cpu_model: FuncId, pub cpu_brand: FuncId, pub cpu_frequency: FuncId, pub cpu_usage: FuncId, pub cpu_cores: FuncId,
+    pub gpu_list: FuncId,
+    pub disk_free: FuncId,
+    pub net_online: FuncId, pub net_public_ip: FuncId, pub net_interfaces: FuncId,
+
+    // Phase 5: sys.args.
+    pub sys_args: FuncId,
 }
 
 impl Runtime {
     pub(crate) fn declare(module: &mut ObjectModule) -> Result<Self, String> {
         let conv = module.target_config().default_call_conv;
-        let build_sig = |params: &[Type], rets: &[Type]| {
+        let sig = |params: &[Type], rets: &[Type]| {
             let mut s = Signature::new(conv);
-            for p in params {
-                s.params.push(AbiParam::new(*p));
-            }
-            for r in rets {
-                s.returns.push(AbiParam::new(*r));
-            }
+            for p in params { s.params.push(AbiParam::new(*p)); }
+            for r in rets { s.returns.push(AbiParam::new(*r)); }
             s
         };
-        let mut decl = |name: &str, sig: Signature| {
-            module
-                .declare_function(name, Linkage::Import, &sig)
+        let mut decl = |name: &str, s: Signature| {
+            module.declare_function(name, Linkage::Import, &s)
                 .map_err(|e| format!("declare `{}`: {}", name, e))
         };
 
-        // Phase 1
-        let string_from_cstr = decl("arcis_string_from_cstr", build_sig(&[I64], &[I64]))?;
-        let string_concat = decl("arcis_string_concat", build_sig(&[I64, I64], &[I64]))?;
-        let string_eq = decl("arcis_string_eq", build_sig(&[I64, I64], &[I32]))?;
-        let string_drop = decl("arcis_string_drop", build_sig(&[I64], &[]))?;
-        let print = decl("arcis_print", build_sig(&[I64], &[]))?;
-        let println = decl("arcis_println", build_sig(&[I64], &[]))?;
-        let num_to_string = decl("arcis_num_to_string", build_sig(&[F64], &[I64]))?;
-        let bool_to_string = decl("arcis_bool_to_string", build_sig(&[I32], &[I64]))?;
-
-        // Phase 2: string methods  —  (ArcisString*) -> ArcisString*
-        let string_to_uppercase = decl("arcis_string_to_uppercase", build_sig(&[I64], &[I64]))?;
-        let string_to_lowercase = decl("arcis_string_to_lowercase", build_sig(&[I64], &[I64]))?;
-        let string_trim = decl("arcis_string_trim", build_sig(&[I64], &[I64]))?;
-        // (ArcisString*, int64_t, int64_t) -> ArcisString*
-        let string_substring = decl("arcis_string_substring", build_sig(&[I64, I64, I64], &[I64]))?;
-        // (ArcisString*, ArcisString*) -> f64
-        let string_index_of = decl("arcis_string_index_of", build_sig(&[I64, I64], &[F64]))?;
-        // (ArcisString*, ArcisString*) -> int32_t
-        let string_includes = decl("arcis_string_includes", build_sig(&[I64, I64], &[I32]))?;
-        // (ArcisString*, int64_t) -> ArcisString*
-        let string_char_at = decl("arcis_string_char_at", build_sig(&[I64, I64], &[I64]))?;
-
-        // Phase 2: I/O  —  () -> ArcisString*
-        let read_line = decl("arcis_read_line", build_sig(&[], &[I64]))?;
-
-        // Phase 2: arrays
-        let vec_new = decl("arcis_vec_new", build_sig(&[], &[I64]))?;
-        let vec_push = decl("arcis_vec_push", build_sig(&[I64, I64], &[]))?;
-        let vec_pop = decl("arcis_vec_pop", build_sig(&[I64], &[I64]))?;
-        let vec_unshift = decl("arcis_vec_unshift", build_sig(&[I64, I64], &[]))?;
-        let vec_len = decl("arcis_vec_len", build_sig(&[I64], &[I32]))?;
-        let vec_get = decl("arcis_vec_get", build_sig(&[I64, I32], &[I64]))?;
-        let vec_set = decl("arcis_vec_set", build_sig(&[I64, I32, I64], &[]))?;
-        let vec_drop = decl("arcis_vec_drop", build_sig(&[I64], &[]))?;
-
-        // Phase 2: objects
-        let object_new = decl("arcis_object_new", build_sig(&[], &[I64]))?;
-        // (ArcisObject*, const char* key, int64_t value) -> void
-        let object_set = decl("arcis_object_set", build_sig(&[I64, I64, I64], &[]))?;
-        // (ArcisObject*, const char* key) -> int64_t value
-        let object_get = decl("arcis_object_get", build_sig(&[I64, I64], &[I64]))?;
-        let object_drop = decl("arcis_object_drop", build_sig(&[I64], &[]))?;
+        // Macro-like helper to reduce repetition.
+        macro_rules! d {
+            ($name:expr, $params:expr, $rets:expr) => {
+                decl($name, sig($params, $rets))?
+            };
+        }
 
         Ok(Runtime {
-            string_from_cstr,
-            string_concat,
-            string_eq,
-            string_drop,
-            print,
-            println,
-            num_to_string,
-            bool_to_string,
-            string_to_uppercase,
-            string_to_lowercase,
-            string_trim,
-            string_substring,
-            string_index_of,
-            string_includes,
-            string_char_at,
-            read_line,
-            vec_new,
-            vec_push,
-            vec_pop,
-            vec_unshift,
-            vec_len,
-            vec_get,
-            vec_set,
-            vec_drop,
-            object_new,
-            object_set,
-            object_get,
-            object_drop,
+            string_from_cstr: d!("arcis_string_from_cstr", &[I64], &[I64]),
+            string_concat:    d!("arcis_string_concat", &[I64, I64], &[I64]),
+            string_eq:        d!("arcis_string_eq", &[I64, I64], &[I32]),
+            string_drop:      d!("arcis_string_drop", &[I64], &[]),
+            print:            d!("arcis_print", &[I64], &[]),
+            println:          d!("arcis_println", &[I64], &[]),
+            num_to_string:    d!("arcis_num_to_string", &[F64], &[I64]),
+            bool_to_string:   d!("arcis_bool_to_string", &[I32], &[I64]),
+
+            string_to_uppercase: d!("arcis_string_to_uppercase", &[I64], &[I64]),
+            string_to_lowercase: d!("arcis_string_to_lowercase", &[I64], &[I64]),
+            string_trim:         d!("arcis_string_trim", &[I64], &[I64]),
+            string_substring:    d!("arcis_string_substring", &[I64, I64, I64], &[I64]),
+            string_index_of:     d!("arcis_string_index_of", &[I64, I64], &[F64]),
+            string_includes:     d!("arcis_string_includes", &[I64, I64], &[I32]),
+            string_char_at:      d!("arcis_string_char_at", &[I64, I64], &[I64]),
+            read_line:           d!("arcis_read_line", &[], &[I64]),
+
+            vec_new:     d!("arcis_vec_new", &[], &[I64]),
+            vec_push:    d!("arcis_vec_push", &[I64, I64], &[]),
+            vec_pop:     d!("arcis_vec_pop", &[I64], &[I64]),
+            vec_unshift: d!("arcis_vec_unshift", &[I64, I64], &[]),
+            vec_len:     d!("arcis_vec_len", &[I64], &[I32]),
+            vec_get:     d!("arcis_vec_get", &[I64, I32], &[I64]),
+            vec_set:     d!("arcis_vec_set", &[I64, I32, I64], &[]),
+            vec_drop:    d!("arcis_vec_drop", &[I64], &[]),
+
+            object_new:  d!("arcis_object_new", &[], &[I64]),
+            object_set:  d!("arcis_object_set", &[I64, I64, I64], &[]),
+            object_get:  d!("arcis_object_get", &[I64, I64], &[I64]),
+            object_drop: d!("arcis_object_drop", &[I64], &[]),
+
+            // sys.* — filesystem.
+            fs_read_file:       d!("arcis_fs_read_file", &[I64], &[I64]),
+            fs_write_file:      d!("arcis_fs_write_file", &[I64, I64], &[]),
+            fs_read_bytes:      d!("arcis_fs_read_bytes", &[I64], &[I64]),
+            fs_write_bytes:     d!("arcis_fs_write_bytes", &[I64, I64], &[]),
+            fs_append_file:     d!("arcis_fs_append_file", &[I64, I64], &[]),
+            fs_create_file:     d!("arcis_fs_create_file", &[I64], &[]),
+            fs_delete_file:     d!("arcis_fs_delete_file", &[I64], &[]),
+            fs_delete_dir:      d!("arcis_fs_delete_dir", &[I64], &[]),
+            fs_delete_dir_all:  d!("arcis_fs_delete_dir_all", &[I64], &[]),
+            fs_mkdir:           d!("arcis_fs_mkdir", &[I64], &[]),
+            fs_list_dir:        d!("arcis_fs_list_dir", &[I64], &[I64]),
+            fs_copy:            d!("arcis_fs_copy", &[I64, I64], &[]),
+            fs_move:            d!("arcis_fs_move", &[I64, I64], &[]),
+
+            // sys.* — path.
+            path_exists:     d!("arcis_path_exists", &[I64], &[F64]),
+            path_is_file:    d!("arcis_path_is_file", &[I64], &[F64]),
+            path_is_dir:     d!("arcis_path_is_dir", &[I64], &[F64]),
+            path_file_size:  d!("arcis_path_file_size", &[I64], &[F64]),
+            path_file_info:  d!("arcis_path_file_info", &[I64], &[I64]),
+            path_absolute:   d!("arcis_path_absolute", &[I64], &[I64]),
+
+            // sys.* — process env.
+            proc_current_dir:     d!("arcis_proc_current_dir", &[], &[I64]),
+            proc_change_dir:      d!("arcis_proc_change_dir", &[I64], &[]),
+            proc_temp_dir:        d!("arcis_proc_temp_dir", &[], &[I64]),
+            proc_home_dir:        d!("arcis_proc_home_dir", &[], &[I64]),
+            proc_executable_path: d!("arcis_proc_executable_path", &[], &[I64]),
+
+            // sys.* — process management.
+            process_current_pid:  d!("arcis_process_current_pid", &[], &[F64]),
+            process_parent_pid:   d!("arcis_process_parent_pid", &[], &[F64]),
+            process_exec:         d!("arcis_process_exec", &[I64, I64], &[I64]),
+            process_run:          d!("arcis_process_run", &[I64], &[I64]),
+            process_spawn:        d!("arcis_process_spawn", &[I64], &[F64]),
+            process_kill:         d!("arcis_process_kill", &[F64], &[]),
+            process_list:         d!("arcis_process_list", &[], &[I64]),
+
+            // sys.* — env.
+            env_get:    d!("arcis_env_get", &[I64], &[I64]),
+            env_set:    d!("arcis_env_set", &[I64, I64], &[]),
+            env_delete: d!("arcis_env_delete", &[I64], &[]),
+            env_all:    d!("arcis_env_all", &[], &[I64]),
+
+            // sys.* — OS.
+            os_name:     d!("arcis_os_name", &[], &[I64]),
+            os_version:  d!("arcis_os_version", &[], &[I64]),
+            os_arch:     d!("arcis_os_arch", &[], &[I64]),
+            os_hostname: d!("arcis_os_hostname", &[], &[I64]),
+            os_username: d!("arcis_os_username", &[], &[I64]),
+            os_uptime:   d!("arcis_os_uptime", &[], &[F64]),
+            os_locale:   d!("arcis_os_locale", &[], &[I64]),
+            os_cpu_count: d!("arcis_os_cpu_count", &[], &[F64]),
+
+            // sys.* — memory, cpu, gpu, disk, net.
+            memory_total:     d!("arcis_memory_total", &[], &[F64]),
+            memory_free:      d!("arcis_memory_free", &[], &[F64]),
+            memory_used:      d!("arcis_memory_used", &[], &[F64]),
+            memory_available: d!("arcis_memory_available", &[], &[F64]),
+            cpu_model:     d!("arcis_cpu_model", &[], &[I64]),
+            cpu_brand:     d!("arcis_cpu_brand", &[], &[I64]),
+            cpu_frequency: d!("arcis_cpu_frequency", &[], &[F64]),
+            cpu_usage:     d!("arcis_cpu_usage", &[], &[F64]),
+            cpu_cores:     d!("arcis_cpu_cores", &[], &[F64]),
+            gpu_list:      d!("arcis_gpu_list", &[], &[I64]),
+            disk_free:     d!("arcis_disk_free", &[I64], &[F64]),
+            net_online:    d!("arcis_net_online", &[], &[F64]),
+            net_public_ip: d!("arcis_net_public_ip", &[], &[I64]),
+            net_interfaces: d!("arcis_net_interfaces", &[], &[I64]),
+
+            sys_args: d!("arcis_sys_args", &[], &[I64]),
         })
     }
 }

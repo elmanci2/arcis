@@ -50,18 +50,12 @@ pub(crate) fn emit(
             Ok((v, ArcisType::Boolean))
         }
         Expr::Ident(name) => {
-            // Two cases: a local binding (Phase 1 default), or a function
-            // reference used as a value (Phase 1: only meaningful inside
-            // another function call). Bare function-name values that aren't
-            // called are not yet supported.
             if let Some(&var) = fctx.var(name) {
-                // Use Cranelift's SSA Variable system so that reads after
-                // an if-else see a phi node joining the two branches'
-                // definitions. Manual tracking would only see one branch's
-                // SSA value.
                 let v = builder.use_var(var);
                 let ty = fctx.ty(name).unwrap_or(ArcisType::Number);
                 Ok((v, ty))
+            } else if name == "sys" {
+                Err("`sys` is a namespace — use sys.X() or sys.ns.method()".to_string())
             } else {
                 Err(format!("unknown identifier `{}`", name))
             }
@@ -88,8 +82,33 @@ pub(crate) fn emit(
                     return Ok(result);
                 }
             }
-            // Method call: arr.push(x) / s.toUpperCase() / etc.
+            // sys.X(args) — top-level sys call.
             if let Expr::Member { object, property } = callee.as_ref() {
+                // sys.ns.method(args) — two-level: object is Member{Ident("sys"), ns}
+                if let Expr::Member { object: sys_obj, property: ns } = object.as_ref() {
+                    if let Expr::Ident(sys_name) = sys_obj.as_ref() {
+                        if sys_name == "sys" {
+                            let dispatched = crate::sys::try_emit_subns(
+                                builder, fctx, ns, property, args, runtime, user_fns, module,
+                            )?;
+                            if let Some(result) = dispatched {
+                                return Ok(result);
+                            }
+                        }
+                    }
+                }
+                // sys.X(args) — one-level Member: object is Ident("sys")
+                if let Expr::Ident(sys_name) = object.as_ref() {
+                    if sys_name == "sys" {
+                        let dispatched = crate::sys::try_emit_call(
+                            builder, fctx, property, args, runtime, user_fns, module,
+                        )?;
+                        if let Some(result) = dispatched {
+                            return Ok(result);
+                        }
+                    }
+                }
+                // Regular method call: arr.push(x) / s.toUpperCase() / etc.
                 let dispatched = crate::method::emit(
                     builder, fctx, object, property, args, runtime, user_fns, module,
                 )?;
@@ -100,6 +119,16 @@ pub(crate) fn emit(
             Err("this call form is not yet supported by the Cranelift backend".to_string())
         }
         Expr::Member { object, property } => {
+            // sys.args member access
+            if let Expr::Ident(sys_name) = object.as_ref() {
+                if sys_name == "sys" {
+                    if let Some(result) = crate::sys::try_emit_member(
+                        builder, fctx, property, runtime, user_fns, module,
+                    )? {
+                        return Ok(result);
+                    }
+                }
+            }
             if property == "length" {
                 let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
                 let len_val = match obj_ty {
@@ -229,20 +258,18 @@ fn emit_unary(
             Ok((v, ty))
         }
         UnaryOp::Not => {
-            let v = match ty {
+            let (v, result_ty) = match ty {
                 ArcisType::Boolean => {
-                    // Cranelift: `bnot` on i8 flips bits, but for booleans
-                    // we want a logical XOR with 1.
                     let one = builder.ins().iconst(I8, 1);
-                    builder.ins().bxor(val, one)
+                    (builder.ins().bxor(val, one), ArcisType::Boolean)
                 }
                 ArcisType::Number => {
                     let zero = builder.ins().f64const(0.0);
-                    builder.ins().fcmp(FloatCC::Equal, val, zero)
+                    (builder.ins().fcmp(FloatCC::Equal, val, zero), ArcisType::Boolean)
                 }
                 _ => return Err("unary `!` only supported on booleans/numbers in Phase 1".to_string()),
             };
-            Ok((v, ty))
+            Ok((v, result_ty))
         }
     }
 }

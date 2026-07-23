@@ -39,6 +39,11 @@ pub(crate) struct LoopFrame {
     /// Block that comes after the loop (the natural fall-through). May be
     /// the same as `break_target` for the outermost loop.
     pub after: Block,
+    /// `FunctionCtx::open_try_count` at the moment this loop was entered —
+    /// `break`/`continue` need to call `arcis_try_end()` for every `try`
+    /// opened *since* (the delta), not every `try` open at all, so a `try`
+    /// wrapping the whole loop stays open after a `break`.
+    pub try_depth_at_entry: u32,
 }
 
 /// State carried inside a single Cranelift function body while
@@ -60,6 +65,9 @@ pub(crate) struct FunctionCtx {
     reassigned: HashSet<String>,
     /// enum name -> (variant name -> numeric value), from `collect::collect_enums`.
     enums: HashMap<String, HashMap<String, f64>>,
+    /// `enums.keys()`, cached so `types::from_ast` callers that only have
+    /// `fctx` (not the raw `enums` map) can borrow a `&HashSet<String>`.
+    enum_names: HashSet<String>,
     /// Stack of nested loops.
     loops: Vec<LoopFrame>,
     /// Map from literal bytes → Cranelift `DataId`. Populated lazily on
@@ -69,6 +77,14 @@ pub(crate) struct FunctionCtx {
     pub string_literal_counter: u32,
     /// Counter used to mint unique `Variable` indices.
     var_counter: u32,
+    /// Counter used to mint unique names for inline arrow functions
+    /// lambda-lifted on the spot (`arr.map(x => x*2)`) — see `method.rs`.
+    pub(crate) arrow_counter: u32,
+    /// How many `try` blocks are currently open (lexically) at the current
+    /// codegen position. `Stmt::Return`/`Break`/`Continue` need this to
+    /// call `arcis_try_end()` the right number of times before an early
+    /// exit, keeping the C runtime's `arcis_try_depth` balanced.
+    pub(crate) open_try_count: u32,
 }
 
 impl FunctionCtx {
@@ -81,11 +97,21 @@ impl FunctionCtx {
             object_field_types: HashMap::new(),
             reassigned: reassigned.clone(),
             enums: enums.clone(),
+            enum_names: enums.keys().cloned().collect(),
             loops: Vec::new(),
             string_literals: HashMap::new(),
             string_literal_counter: 0,
             var_counter: 0,
+            arrow_counter: 0,
+            open_try_count: 0,
         }
+    }
+
+    /// The full enum table (name -> variant -> value), for lambda-lifting
+    /// an inline arrow on the spot (`method.rs`) — its body may itself
+    /// reference an enum, so the synthetic function needs the same table.
+    pub(crate) fn enums(&self) -> &HashMap<String, HashMap<String, f64>> {
+        &self.enums
     }
 
     /// `true` if `name` is a declared `enum`.
@@ -96,6 +122,12 @@ impl FunctionCtx {
     /// The numeric value of `enum_name.variant_name`, if both exist.
     pub(crate) fn enum_variant_value(&self, enum_name: &str, variant_name: &str) -> Option<f64> {
         self.enums.get(enum_name)?.get(variant_name).copied()
+    }
+
+    /// Every declared enum's name, for `types::from_ast` callers that only
+    /// have `fctx` in scope.
+    pub(crate) fn enum_names(&self) -> &HashSet<String> {
+        &self.enum_names
     }
 
     pub fn define(&mut self, name: &str, ty: ArcisType, init: Value, builder: &mut cranelift_frontend::FunctionBuilder<'_>) -> Variable {
@@ -139,7 +171,7 @@ impl FunctionCtx {
     pub(crate) fn set_object_fields(&mut self, name: &str, fields: &[(String, Box<arcis_ast::Type>, bool)]) {
         let mut map = HashMap::new();
         for (fname, fty, _optional) in fields {
-            if let Ok(at) = crate::types::from_ast(fty) {
+            if let Ok(at) = crate::types::from_ast(fty, &self.enum_names) {
                 map.insert(fname.clone(), at);
             }
         }

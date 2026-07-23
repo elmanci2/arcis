@@ -43,10 +43,17 @@ pub(crate) fn emit_stmt(
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     match stmt {
+        Stmt::Let { value: Expr::Arrow { .. }, .. } | Stmt::Const { value: Expr::Arrow { .. }, .. } => {
+            // `let name = (params) => body;` was already lambda-lifted into
+            // a synthetic top-level function and registered in `user_fns`
+            // by `module.rs::collect_arrow_lets` — nothing to emit here.
+            // `name(...)` calls resolve through the normal `user_fns` path.
+            Ok(())
+        }
         Stmt::Let { name, ty, value, .. } | Stmt::Const { name, ty, value, .. } => {
             let (v, inferred_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
             let resolved = match ty {
-                Some(t) => from_ast(t)?,
+                Some(t) => from_ast(t, fctx.enum_names())?,
                 None => inferred_ty,
             };
             fctx.define(name, resolved, v, builder);
@@ -60,7 +67,7 @@ pub(crate) fn emit_stmt(
                     None => Some(t),
                 };
                 if let Some(inner) = t.array_inner() {
-                    fctx.set_element_ty(name, from_ast(inner)?);
+                    fctx.set_element_ty(name, from_ast(inner, fctx.enum_names())?);
                 }
                 if let Some(fields) = object_source.and_then(|o| o.object_fields()) {
                     fctx.set_object_fields(name, fields);
@@ -137,12 +144,21 @@ pub(crate) fn emit_stmt(
             Ok(())
         }
         Stmt::Return(value) => {
-            if let Some(e) = value {
-                let (v, _) = expr::emit(builder, fctx, e, runtime, user_fns, module)?;
-                builder.ins().return_(&[v]);
-            } else {
-                builder.ins().return_(&[]);
-            }
+            // Leaving the function entirely: every currently-open `try`
+            // must call `arcis_try_end()` first so the C runtime's
+            // `arcis_try_depth` doesn't leak past this call.
+            let v = match value {
+                Some(e) => {
+                    let (v, _) = expr::emit(builder, fctx, e, runtime, user_fns, module)?;
+                    Some(v)
+                }
+                None => None,
+            };
+            emit_try_ends(builder, module, runtime, fctx.open_try_count);
+            match v {
+                Some(v) => builder.ins().return_(&[v]),
+                None => builder.ins().return_(&[]),
+            };
             Ok(())
         }
         Stmt::If { condition, then_branch, else_branch } => {
@@ -188,6 +204,7 @@ pub(crate) fn emit_stmt(
                 continue_target: cond_block,
                 break_target: after_block,
                 after: after_block,
+                try_depth_at_entry: fctx.open_try_count,
             });
 
             // Load element: cur_idx (f64) → i32 → vec_get
@@ -241,16 +258,20 @@ pub(crate) fn emit_stmt(
             Ok(())
         }
         Stmt::Break => {
-            let frame = fctx
+            let frame = *fctx
                 .current_loop()
                 .ok_or_else(|| "`break` outside of a loop".to_string())?;
+            // Close every `try` opened since the loop was entered (a `try`
+            // wrapping the whole loop stays open).
+            emit_try_ends(builder, module, runtime, fctx.open_try_count - frame.try_depth_at_entry);
             builder.ins().jump(frame.break_target, &[]);
             Ok(())
         }
         Stmt::Continue => {
-            let frame = fctx
+            let frame = *fctx
                 .current_loop()
                 .ok_or_else(|| "`continue` outside of a loop".to_string())?;
+            emit_try_ends(builder, module, runtime, fctx.open_try_count - frame.try_depth_at_entry);
             builder.ins().jump(frame.continue_target, &[]);
             Ok(())
         }
@@ -277,12 +298,13 @@ pub(crate) fn emit_stmt(
             // call site (see `expr.rs`), driven by `collect::collect_enums`.
             Ok(())
         }
-        Stmt::Switch { .. } => {
-            Err("`switch` is not yet supported by the Cranelift backend".to_string())
+        Stmt::Switch { discriminant, cases } => {
+            emit_switch(builder, fctx, discriminant, cases, runtime, user_fns, module)
         }
-        Stmt::Try { .. } | Stmt::Throw(_) => {
-            Err("`try`/`catch`/`throw` are not yet supported by the Cranelift backend".to_string())
+        Stmt::Try { body, catch_name, catch_body } => {
+            emit_try(builder, fctx, body, catch_name.as_deref(), catch_body, runtime, user_fns, module)
         }
+        Stmt::Throw(expr) => emit_throw(builder, fctx, expr, runtime, user_fns, module),
     }
 }
 
@@ -381,6 +403,103 @@ fn emit_if(
     Ok(())
 }
 
+/// `switch (d) { case v1: A case v2: B default: C }` -> a chain of
+/// equality comparisons against the discriminant, deliberately NOT a
+/// Cranelift jump-table/`br_table`: case values are arbitrary expressions
+/// (not required to be compile-time constants — the parser allows
+/// `case someExpr():`), so each one must go through `expr::emit` like any
+/// other expression. Non-fallthrough: every case body unconditionally
+/// jumps to `after_block`; `break` inside a case is a no-op (see
+/// `Stmt::Break`'s handling in `emit_switch_case_body`).
+fn emit_switch(
+    builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
+    discriminant: &Expr,
+    cases: &[arcis_ast::SwitchCase],
+    runtime: &Runtime,
+    user_fns: &HashMap<String, FnInfo>,
+    module: &mut ObjectModule,
+) -> Result<(), String> {
+    let (disc_v, disc_ty) = expr::emit(builder, fctx, discriminant, runtime, user_fns, module)?;
+    // Stash the discriminant in a Cranelift Variable so each case can
+    // compare against it without re-evaluating `discriminant` (which may
+    // have side effects, e.g. a function call).
+    let disc_var = fctx.define("__switch_disc", disc_ty, disc_v, builder);
+
+    let after_block = builder.create_block();
+    let default_case = cases.iter().find(|c| c.is_default);
+
+    for case in cases.iter().filter(|c| !c.is_default) {
+        let cur_disc = builder.use_var(disc_var);
+        let mut cond: Option<cranelift_codegen::ir::Value> = None;
+        for value_expr in &case.values {
+            let (val_v, val_ty) = expr::emit(builder, fctx, value_expr, runtime, user_fns, module)?;
+            let eq = crate::expr::emit_eq(builder, module, runtime, cur_disc, disc_ty, val_v, val_ty)?;
+            cond = Some(match cond {
+                None => eq,
+                Some(prev) => {
+                    // OR two I8 0/1 booleans via a widen/bor/narrow-back
+                    // round-trip (mirrors `emit_binary`'s boolean `||`).
+                    let prev32 = builder.ins().uextend(I32, prev);
+                    let eq32 = builder.ins().uextend(I32, eq);
+                    let bor = builder.ins().bor(prev32, eq32);
+                    let zero = builder.ins().iconst(I32, 0);
+                    builder.ins().icmp(IntCC::NotEqual, bor, zero)
+                }
+            });
+        }
+        let cond = cond.ok_or_else(|| "`case` with no values".to_string())?;
+
+        let case_block = builder.create_block();
+        let next_check_block = builder.create_block();
+        builder.ins().brif(cond, case_block, &[], next_check_block, &[]);
+
+        builder.switch_to_block(case_block);
+        builder.seal_block(case_block);
+        emit_switch_case_body(builder, fctx, &case.body, runtime, user_fns, module)?;
+        if !is_block_terminated(builder) {
+            builder.ins().jump(after_block, &[]);
+        }
+
+        builder.switch_to_block(next_check_block);
+        builder.seal_block(next_check_block);
+    }
+
+    // Reached only when no case matched.
+    if let Some(case) = default_case {
+        emit_switch_case_body(builder, fctx, &case.body, runtime, user_fns, module)?;
+    }
+    if !is_block_terminated(builder) {
+        builder.ins().jump(after_block, &[]);
+    }
+
+    builder.switch_to_block(after_block);
+    builder.seal_block(after_block);
+    Ok(())
+}
+
+/// Emit a switch case's body, treating a top-level `break;` as a no-op —
+/// mirrors the Rust backend's `emit_switch_case_body` (there is no Cranelift
+/// loop/labeled-block wrapping each case, so a real `break` would have
+/// nowhere valid to jump to; a `break` inside a loop *nested* within the
+/// case is unaffected, since that loop pushes its own `LoopFrame`).
+fn emit_switch_case_body(
+    builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
+    body: &[Stmt],
+    runtime: &Runtime,
+    user_fns: &HashMap<String, FnInfo>,
+    module: &mut ObjectModule,
+) -> Result<(), String> {
+    for s in body {
+        if matches!(s, Stmt::Break) {
+            continue;
+        }
+        emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
+    }
+    Ok(())
+}
+
 fn emit_while(
     builder: &mut FunctionBuilder,
     fctx: &mut FunctionCtx,
@@ -409,6 +528,7 @@ fn emit_while(
         continue_target: cond_block,
         break_target: after_block,
         after: after_block,
+        try_depth_at_entry: fctx.open_try_count,
     });
     for s in body {
         emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
@@ -466,6 +586,7 @@ fn emit_for(
         continue_target: update_block,
         break_target: after_block,
         after: after_block,
+        try_depth_at_entry: fctx.open_try_count,
     });
     for s in body {
         emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
@@ -492,6 +613,105 @@ fn emit_for(
     builder.switch_to_block(after_block);
     builder.seal_block(after_block);
     Ok(())
+}
+
+/// `try { body } catch (e) { catch_body }` -> `arcis_try_begin`/`longjmp`.
+///
+/// `arcis_try_begin()` returns `0` on the direct call (about to run `body`)
+/// or `1` when control resumed via `longjmp` from a `throw` somewhere in
+/// `body` (possibly several calls deep). Both paths converge on
+/// `after_block`, each having called `arcis_try_end()` exactly once first —
+/// see `runtime.rs`'s module doc comment for why the C-side depth counter
+/// isn't decremented by `longjmp` itself.
+fn emit_try(
+    builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
+    body: &[Stmt],
+    catch_name: Option<&str>,
+    catch_body: &[Stmt],
+    runtime: &Runtime,
+    user_fns: &HashMap<String, FnInfo>,
+    module: &mut ObjectModule,
+) -> Result<(), String> {
+    // Reserve a `jmp_buf` slot (a normal call — safe to wrap and return
+    // from) ...
+    let callee_push = module.declare_func_in_func(runtime.try_push, builder.func);
+    let call_push = builder.ins().call(callee_push, &[]);
+    let buf_ptr = builder.inst_results(call_push)[0];
+    // ... then call `setjmp` on it *directly*: its "containing function" is
+    // this Cranelift-compiled function, which does not return between here
+    // and any later `longjmp` (control just moves between this function's
+    // own blocks while the `try` body runs) — see `runtime.rs`'s comment
+    // for why a wrapper that itself returns is unsound here.
+    let callee_setjmp = module.declare_func_in_func(runtime.raw_setjmp, builder.func);
+    let call_setjmp = builder.ins().call(callee_setjmp, &[buf_ptr]);
+    let r = builder.inst_results(call_setjmp)[0];
+
+    let try_block = builder.create_block();
+    let catch_block = builder.create_block();
+    let after_block = builder.create_block();
+
+    let zero = builder.ins().iconst(I32, 0);
+    let is_normal = builder.ins().icmp(IntCC::Equal, r, zero);
+    builder.ins().brif(is_normal, try_block, &[], catch_block, &[]);
+
+    builder.switch_to_block(try_block);
+    builder.seal_block(try_block);
+    fctx.open_try_count += 1;
+    for s in body {
+        emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
+    }
+    fctx.open_try_count -= 1;
+    if !is_block_terminated(builder) {
+        emit_try_ends(builder, module, runtime, 1);
+        builder.ins().jump(after_block, &[]);
+    }
+
+    builder.switch_to_block(catch_block);
+    builder.seal_block(catch_block);
+    emit_try_ends(builder, module, runtime, 1);
+    if let Some(name) = catch_name {
+        let callee_val = module.declare_func_in_func(runtime.thrown_value, builder.func);
+        let call_val = builder.ins().call(callee_val, &[]);
+        let handle = builder.inst_results(call_val)[0];
+        fctx.define(name, ArcisType::String, handle, builder);
+    }
+    for s in catch_body {
+        emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
+    }
+    if !is_block_terminated(builder) {
+        builder.ins().jump(after_block, &[]);
+    }
+
+    builder.switch_to_block(after_block);
+    builder.seal_block(after_block);
+    Ok(())
+}
+
+/// `throw expr;` -> coerce `expr` to a string message and call `arcis_throw`.
+fn emit_throw(
+    builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
+    expr_node: &Expr,
+    runtime: &Runtime,
+    user_fns: &HashMap<String, FnInfo>,
+    module: &mut ObjectModule,
+) -> Result<(), String> {
+    let (val, ty) = expr::emit(builder, fctx, expr_node, runtime, user_fns, module)?;
+    let handle = crate::expr::promote_to_string(builder, val, ty, module, runtime)?;
+    let callee = module.declare_func_in_func(runtime.throw, builder.func);
+    builder.ins().call(callee, &[handle]);
+    Ok(())
+}
+
+/// Emit `count` calls to `arcis_try_end()`, keeping the C runtime's
+/// `arcis_try_depth` balanced across an early exit (`return`/`break`/
+/// `continue`) out of one or more open `try` blocks.
+fn emit_try_ends(builder: &mut FunctionBuilder, module: &mut ObjectModule, runtime: &Runtime, count: u32) {
+    for _ in 0..count {
+        let callee = module.declare_func_in_func(runtime.try_end, builder.func);
+        builder.ins().call(callee, &[]);
+    }
 }
 
 /// Coerce a value of any Arcis type into an `i8` truthy for `brif`.

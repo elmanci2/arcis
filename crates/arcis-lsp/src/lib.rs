@@ -16,6 +16,12 @@
 //!   the appropriate slice of the table.
 //! - [`hover`] — hover provider. Looks up the identifier under the
 //!   cursor and returns its `detail` + `documentation`.
+//! - [`definition`] — go-to-definition provider. Resolves an identifier
+//!   to its declaration site, same-file or across a module import.
+//! - [`symbols`] — shared AST walk that harvests every named
+//!   definition in a document (locals, imports, types, enums, …); the
+//!   single source of truth `completion`, `hover`, and `definition` all
+//!   build on.
 //! - [`diagnostics`] — runs the lexer and parser on the whole
 //!   document and emits one `Diagnostic` per issue.
 //! - [`server`] — Router construction wiring the three providers
@@ -27,6 +33,7 @@ pub mod definition;
 pub mod diagnostics;
 pub mod hover;
 pub mod server;
+pub mod symbols;
 
 /// Re-export of `async_lsp::lsp_types` so other modules can write
 /// `lsp::Foo` without needing to know the async-lsp path.

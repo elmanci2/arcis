@@ -61,7 +61,18 @@ impl ArcisType {
 }
 
 /// Convert an Arcis type AST node into an [`ArcisType`] when possible.
-pub(crate) fn from_ast(ty: &AstType) -> Result<ArcisType, String> {
+///
+/// `enum_names` — every declared `enum`'s name (from
+/// `collect::collect_enums`). Enums have no dedicated `ArcisType`; a
+/// `Named(name)` matching a known enum resolves to `Number` (their values
+/// are plain `f64` constants, see `expr.rs`'s `Expr::Member` handling),
+/// instead of falling through to the generic `Object` fallback below.
+pub(crate) fn from_ast(ty: &AstType, enum_names: &std::collections::HashSet<String>) -> Result<ArcisType, String> {
+    if let AstType::Named(name) = ty {
+        if enum_names.contains(name) {
+            return Ok(ArcisType::Number);
+        }
+    }
     match ty {
         // `T[]` becomes ArcisType::Array regardless of the inner type.
         // The inner type is stored in the Type AST node but the runtime
@@ -87,7 +98,7 @@ pub(crate) fn from_ast(ty: &AstType) -> Result<ArcisType, String> {
         // matching the Rust backend's erasure model.
         AstType::Union(members) | AstType::Intersection(members) => members
             .first()
-            .map(from_ast)
+            .map(|m| from_ast(m, enum_names))
             .unwrap_or(Ok(ArcisType::Void)),
         // Function values and named (type-alias / interface) types are not
         // yet lowered by the Cranelift backend; both need a runtime

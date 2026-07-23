@@ -18,8 +18,9 @@ pub(crate) struct Runtime {
     pub read_line: FuncId,
     pub vec_new: FuncId, pub vec_push: FuncId, pub vec_pop: FuncId, pub vec_unshift: FuncId,
     pub vec_len: FuncId, pub vec_get: FuncId, pub vec_set: FuncId,
-    pub vec_drop: FuncId,
+    pub vec_drop: FuncId, pub vec_extend: FuncId,
     pub object_new: FuncId, pub object_set: FuncId, pub object_get: FuncId, pub object_drop: FuncId,
+    pub object_merge: FuncId,
 
     // Phase 5: sys.* — filesystem.
     pub fs_read_file: FuncId, pub fs_write_file: FuncId,
@@ -60,6 +61,14 @@ pub(crate) struct Runtime {
 
     // Phase 5: sys.args.
     pub sys_args: FuncId,
+
+    // try / catch / throw. `raw_setjmp` is libc's real `setjmp` symbol,
+    // called *directly* by the Cranelift-generated `try` code (never
+    // through a C wrapper that returns) — see `runtime.rs`'s module doc
+    // comment on why that distinction is load-bearing, not stylistic.
+    pub try_push: FuncId, pub try_end: FuncId,
+    pub throw: FuncId, pub thrown_value: FuncId,
+    pub raw_setjmp: FuncId,
 }
 
 impl Runtime {
@@ -112,11 +121,13 @@ impl Runtime {
             vec_get:     d!("arcis_vec_get", &[I64, I32], &[I64]),
             vec_set:     d!("arcis_vec_set", &[I64, I32, I64], &[]),
             vec_drop:    d!("arcis_vec_drop", &[I64], &[]),
+            vec_extend:  d!("arcis_vec_extend", &[I64, I64], &[]),
 
             object_new:  d!("arcis_object_new", &[], &[I64]),
             object_set:  d!("arcis_object_set", &[I64, I64, I64], &[]),
             object_get:  d!("arcis_object_get", &[I64, I64], &[I64]),
             object_drop: d!("arcis_object_drop", &[I64], &[]),
+            object_merge: d!("arcis_object_merge", &[I64, I64], &[]),
 
             // sys.* — filesystem.
             fs_read_file:       d!("arcis_fs_read_file", &[I64], &[I64]),
@@ -191,6 +202,15 @@ impl Runtime {
             net_interfaces: d!("arcis_net_interfaces", &[], &[I64]),
 
             sys_args: d!("arcis_sys_args", &[], &[I64]),
+
+            try_push:     d!("arcis_try_push", &[], &[I64]),
+            try_end:      d!("arcis_try_end", &[], &[]),
+            throw:        d!("arcis_throw", &[I64], &[]),
+            thrown_value: d!("arcis_thrown_value", &[], &[I64]),
+            // libc's own `setjmp(jmp_buf)`, declared and called directly —
+            // NOT a wrapper we define in `arcis_runtime.c`, resolved by the
+            // final `cc` link step against the system libc.
+            raw_setjmp:   d!("setjmp", &[I64], &[I32]),
         })
     }
 }

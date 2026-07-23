@@ -36,12 +36,13 @@ pub(crate) fn emit_function(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let mut fctx = FunctionCtx::new(reassigned, enums);
+    let enum_names: std::collections::HashSet<String> = enums.keys().cloned().collect();
 
     // Bind each Arcis parameter to a Cranelift variable populated from the
     // entry block's parameters.
     let block_params = builder.block_params(entry).to_vec();
     for (i, p) in f.params.iter().enumerate() {
-        let ty = from_ast(&p.ty).unwrap_or(ArcisType::Number);
+        let ty = from_ast(&p.ty, &enum_names).unwrap_or(ArcisType::Number);
         fctx.define(&p.name, ty, block_params[i], &mut builder);
     }
 
@@ -61,7 +62,7 @@ pub(crate) fn emit_function(
     // we emit a default of the type. Skip the emission when the block is
     // already terminated by an explicit `return` (or a control-flow jump).
     if !block_already_terminated(&builder) {
-        let return_ty = from_ast(&f.return_type).unwrap_or(ArcisType::Void);
+        let return_ty = from_ast(&f.return_type, &enum_names).unwrap_or(ArcisType::Void);
         match return_ty {
             ArcisType::Void => {
                 builder.ins().return_(&[]);

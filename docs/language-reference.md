@@ -168,12 +168,13 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | `as const`             | ✔ parsed and erased the same way as `as Type` |
 | Non-null assertion (`!`) | ✔ postfix `!` — compile-time only, no runtime null check yet |
 | Function types          | ✔ `(a: T, b: U) => R` in type position (Rust backend only) |
-| Shadowing              | ✔ `let x` re-declared in a nested block — resolved by an alpha-renaming pre-pass before validation/codegen ever see it (Rust backend and Cranelift backend both) |
-| Arrow functions         | ✔ `(x: number): number => x * 2`, block or expression body — **no variable capture** (lowers to a non-capturing Rust closure); usable inline as `.map`/`.filter`/`.find`/`.reduce` callbacks (Rust backend only) |
-| Spread (`...`)          | ✔ in array literals (`[...a, ...b]`) and object literals (`{ ...base, field: v }`) (Rust backend only) |
-| `switch`/`case`/`default` | ✔ **non-fallthrough** — each case is its own block, not a C-style fallthrough chain; lowers to an `if`/`else if` chain, not a Rust `match` (`number` is `f64`, and Rust match patterns reject float literals) (Rust backend only) |
-| `try`/`catch`/`throw`   | ✔ lowers to `std::panic::catch_unwind`/`panic!` — see the caveats below (Rust backend only) |
-| Enums                | ✔ `enum X { A, B = 5, C }` — numeric only, emits a `pub enum`; `X.A` → `X::A` (Rust backend only) |
+| Shadowing              | ✔ `let x` re-declared in a nested block — resolved by an alpha-renaming pre-pass before validation/codegen ever see it (both backends) |
+| Arrow functions         | ✔ `(x: number): number => x * 2`, block or expression body — **no variable capture**. Rust backend: lowers to a non-capturing closure. Cranelift backend: lambda-lifted into a synthetic top-level function (sound since there's no capture); a return type omitted from the source defaults to `number` (Cranelift has no `rustc`-style inference). Usable inline as `.map`/`.filter`/`.find`/`.reduce` callbacks on both backends |
+| Spread (`...`)          | ✔ in array literals (`[...a, ...b]`) and object literals (`{ ...base, field: v }`) (both backends — Cranelift via new `arcis_vec_extend`/`arcis_object_merge` runtime calls) |
+| `switch`/`case`/`default` | ✔ **non-fallthrough** — each case is its own block, not a C-style fallthrough chain. Rust backend: `if`/`else if` chain (not a Rust `match`, since `number` is `f64` and Rust match patterns reject float literals). Cranelift backend: the same `==`-chain shape, built directly in Cranelift IR (both backends) |
+| `try`/`catch`/`throw`   | ✔ Rust backend: `std::panic::catch_unwind`/`panic!`. Cranelift backend: `setjmp`/`longjmp`, called *directly* from the generated IR (not through a C wrapper that returns — that shape is unsound, see the caveats below). Both backends leak the thrown value's frame locals on unwind (documented, not hidden) |
+| Enums                | ✔ `enum X { A, B = 5, C }` — numeric only. Rust backend: emits a `pub enum`, `X.A` → `X::A`. Cranelift backend: erases to a plain `f64const` (no enum type exists at the Cranelift IR level) (both backends) |
+| Array-method callbacks (`.find`/`.filter`/`.map`/`.reduce`) | ✔ Cranelift backend builds a real loop (blocks + `brif` + indirect-free direct calls) rather than splicing the callback inline the way the Rust backend does — this was a **pre-existing gap** (0% implemented) closed in the same pass as the six features above, not a new feature of its own |
 | Type checker         | — (relies on `rustc` today; annotations are not verified) |
 | Classes              | —                |
 | Generics             | —                |
@@ -183,7 +184,8 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | `bigint` literals (`100n`) | —          |
 | Async                | —                |
 | `import * as ns`     | —                |
-| Cranelift backend: unions/interfaces/aliases/`any`/enums/arrows/spread/switch/try | — (Phase 1 only covers primitives, control flow, and function calls; everything above marked "Rust backend only" returns a clear error there instead of silently doing the wrong thing) |
+| Cranelift backend: unions/interfaces/aliases/`any` | — (still erase to an opaque `Object` handle or error; unrelated to the parity work above) |
+| Cranelift backend: `continue`/`break` inside an `if` nested in a `for-of` loop | — **known pre-existing bug**, confirmed to predate all of the above work (reproduces against the last committed revision with none of it applied): hangs instead of terminating. Not yet root-caused; tracked separately from the everyday-types/control-flow parity effort. |
 
 ## How types flow
 
@@ -260,6 +262,40 @@ same as TypeScript's own erasure model. Two consequences:
   inside it do not propagate to the enclosing function/loop the way they
   would in TypeScript (`rustc` rejects `break`/`continue` there outright;
   a `return` would silently only return from the closure).
+
+### Cranelift-backend specifics
+
+- **Arrow functions** are lambda-lifted: each `let f = (params) => body;`
+  becomes a synthetic top-level Cranelift function declared/defined through
+  the exact same two-phase machinery as a real `function` (sound because
+  Arcis arrows never capture). An arrow used inline as a callback
+  (`arr.map(x => x * 2)`) is lambda-lifted **on the spot**, right where it's
+  encountered, into a freshly declared+defined function — this works
+  because Cranelift's `declare_function`/`define_function` don't require a
+  single function to be "in progress" globally; a fresh `Context` can be
+  built and defined while another function's `Context` is still open.
+- **`try`/`catch`/`throw`** lower to `setjmp`/`longjmp` against a small
+  global stack of `jmp_buf`s in the C runtion (single-threaded, so no
+  locking needed). The critical implementation detail: `setjmp` is called
+  **directly** by the Cranelift-generated code for the `try` statement,
+  never through a C wrapper function that then returns. A `longjmp` cannot
+  resume a function whose activation has already ended (C99 §7.13.2.1) —
+  a first implementation attempt that called `setjmp` inside a thin
+  `arcis_try_begin()` wrapper and returned its result **segfaulted
+  reliably** on this target, which is how this constraint was confirmed
+  empirically, not just theoretically. The fix: a normal helper
+  (`arcis_try_push`) only reserves a `jmp_buf` slot and returns its
+  pointer; the Cranelift IR itself then calls libc's real `setjmp` symbol
+  (confirmed present as a directly-callable symbol on this target, not
+  merely a header macro) so the function that "contains" the `setjmp` call
+  is the Cranelift-compiled function itself, which stays on the stack for
+  the whole lexical scope of the `try`. `return`/`break`/`continue` inside
+  an open `try` emit matching `arcis_try_end()` calls first, to keep the
+  runtime's open-try counter balanced.
+- **Enums** and **`switch`** need no Cranelift-specific caveats beyond
+  what's already true generally: enum values are `f64const`s (no runtime
+  cost), and `switch` is the same `==`-chain shape as the Rust backend,
+  built directly with `brif`/blocks instead of Rust source text.
 
 ## Operator semantics
 

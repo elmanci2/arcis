@@ -284,14 +284,20 @@ pub(crate) fn emit(
             let call_new = builder.ins().call(callee_new, &[]);
             let vec_handle = builder.inst_results(call_new)[0];
             for elem in elements {
-                let arcis_ast::ArrayElement::Item(elem) = elem else {
-                    return Err("`...spread` in array literals is not yet supported by the Cranelift backend".to_string());
-                };
-                // Promote element to I64 handle. Numbers need bitcast to i64.
-                let (elem_val, elem_ty) = emit(builder, fctx, elem, runtime, user_fns, module)?;
-                let i64_val = promote_to_i64(builder, elem_val, elem_ty);
-                let callee_push = module.declare_func_in_func(runtime.vec_push, builder.func);
-                builder.ins().call(callee_push, &[vec_handle, i64_val]);
+                match elem {
+                    arcis_ast::ArrayElement::Item(elem) => {
+                        // Promote element to I64 handle. Numbers need bitcast to i64.
+                        let (elem_val, elem_ty) = emit(builder, fctx, elem, runtime, user_fns, module)?;
+                        let i64_val = promote_to_i64(builder, elem_val, elem_ty);
+                        let callee_push = module.declare_func_in_func(runtime.vec_push, builder.func);
+                        builder.ins().call(callee_push, &[vec_handle, i64_val]);
+                    }
+                    arcis_ast::ArrayElement::Spread(src) => {
+                        let (src_val, _) = emit(builder, fctx, src, runtime, user_fns, module)?;
+                        let callee_extend = module.declare_func_in_func(runtime.vec_extend, builder.func);
+                        builder.ins().call(callee_extend, &[vec_handle, src_val]);
+                    }
+                }
             }
             Ok((vec_handle, ArcisType::Array))
         }
@@ -300,15 +306,21 @@ pub(crate) fn emit(
             let call_new = builder.ins().call(callee_new, &[]);
             let obj_handle = builder.inst_results(call_new)[0];
             for field in fields {
-                let arcis_ast::ObjectField::KV(key, value) = field else {
-                    return Err("`...spread` in object literals is not yet supported by the Cranelift backend".to_string());
-                };
-                let (val_v, val_ty) = emit(builder, fctx, value, runtime, user_fns, module)?;
-                let i64_val = promote_to_i64(builder, val_v, val_ty);
-                // key becomes a string literal data object → call arcis_string_from_cstr
-                let key_handle = emit_string_literal(builder, fctx, module, key, runtime)?;
-                let callee_set = module.declare_func_in_func(runtime.object_set, builder.func);
-                builder.ins().call(callee_set, &[obj_handle, key_handle, i64_val]);
+                match field {
+                    arcis_ast::ObjectField::KV(key, value) => {
+                        let (val_v, val_ty) = emit(builder, fctx, value, runtime, user_fns, module)?;
+                        let i64_val = promote_to_i64(builder, val_v, val_ty);
+                        // key becomes a string literal data object → call arcis_string_from_cstr
+                        let key_handle = emit_string_literal(builder, fctx, module, key, runtime)?;
+                        let callee_set = module.declare_func_in_func(runtime.object_set, builder.func);
+                        builder.ins().call(callee_set, &[obj_handle, key_handle, i64_val]);
+                    }
+                    arcis_ast::ObjectField::Spread(src) => {
+                        let (src_val, _) = emit(builder, fctx, src, runtime, user_fns, module)?;
+                        let callee_merge = module.declare_func_in_func(runtime.object_merge, builder.func);
+                        builder.ins().call(callee_merge, &[obj_handle, src_val]);
+                    }
+                }
             }
             Ok((obj_handle, ArcisType::Object))
         }
@@ -372,6 +384,42 @@ fn emit_unary(
     }
 }
 
+/// Lower `lv == rv` (both already-evaluated SSA values) to an `I8` 0/1
+/// boolean, dispatching on the runtime representation the same way
+/// `emit_binary`'s `EqEq` arm does. Shared with `stmt::emit_switch`, whose
+/// `case` comparisons are structurally the same operation but performed
+/// against a pre-evaluated discriminant rather than a fresh `Expr::Binary`.
+pub(crate) fn emit_eq(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &Runtime,
+    lv: cranelift_codegen::ir::Value,
+    lt: ArcisType,
+    rv: cranelift_codegen::ir::Value,
+    rt: ArcisType,
+) -> Result<cranelift_codegen::ir::Value, String> {
+    match (lt, rt) {
+        (ArcisType::String, ArcisType::String) => {
+            let callee = module.declare_func_in_func(runtime.string_eq, builder.func);
+            let call = builder.ins().call(callee, &[lv, rv]);
+            let raw = builder.inst_results(call)[0];
+            let one = builder.ins().iconst(I32, 1);
+            Ok(builder.ins().icmp(IntCC::Equal, raw, one))
+        }
+        (ArcisType::Number, ArcisType::Number) => {
+            Ok(builder.ins().fcmp(FloatCC::Equal, lv, rv))
+        }
+        (ArcisType::Boolean, ArcisType::Boolean) => {
+            Ok(builder.ins().icmp(IntCC::Equal, lv, rv))
+        }
+        _ => Err(format!(
+            "cannot compare `{}` with `{}` using `==`",
+            lt.name(),
+            rt.name()
+        )),
+    }
+}
+
 fn emit_binary(
     builder: &mut FunctionBuilder,
     fctx: &mut FunctionCtx,
@@ -385,15 +433,14 @@ fn emit_binary(
     let (lv, lt) = emit(builder, fctx, left, runtime, user_fns, module)?;
     let (rv, rt) = emit(builder, fctx, right, runtime, user_fns, module)?;
 
-    // String concatenation on `+` — both sides must be strings.
+    // String concatenation on `+`. If exactly one side is already a string,
+    // auto-promote the other (number/boolean) to a string first, matching
+    // the Rust backend's `format!("{}{}", a, b)` behavior for
+    // `print("label: " + value)` — otherwise this bit-for-bit-matches the
+    // most common `print` pattern in every example and would reject it.
     if matches!(op, BinOp::Add) && (lt == ArcisType::String || rt == ArcisType::String) {
-        if lt != ArcisType::String || rt != ArcisType::String {
-            return Err(format!(
-                "cannot add `{}` and `{}` with `+` — use explicit conversion",
-                lt.name(),
-                rt.name()
-            ));
-        }
+        let lv = if lt == ArcisType::String { lv } else { promote_to_string(builder, lv, lt, module, runtime)? };
+        let rv = if rt == ArcisType::String { rv } else { promote_to_string(builder, rv, rt, module, runtime)? };
         let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
         let call = builder.ins().call(callee, &[lv, rv]);
         let handle = builder.inst_results(call)[0];
@@ -611,7 +658,7 @@ fn emit_string_length(
     Ok(len)
 }
 
-fn promote_to_string(
+pub(crate) fn promote_to_string(
     builder: &mut FunctionBuilder,
     value: cranelift_codegen::ir::Value,
     ty: ArcisType,

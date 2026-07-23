@@ -61,6 +61,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <signal.h>
 #include <errno.h>
 #include <math.h>
+#include <setjmp.h>
 
 typedef struct {
     char*    ptr;
@@ -111,6 +112,79 @@ void arcis_string_drop(ArcisString* s) {
         free(s->ptr);
     }
     free(s);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// try / catch / throw
+//
+// Arcis is single-threaded, so a plain global stack of `jmp_buf`s (mirroring
+// the Cranelift codegen's own `Vec<LoopFrame>` loop-nesting stack) is enough
+// to support nested `try` blocks.
+//
+// IMPORTANT: `setjmp` must be called *directly* by the Cranelift-generated
+// code for the `try` statement (see `stmt.rs::emit_try`), NOT through a C
+// wrapper that then returns — a `longjmp` cannot resume a function whose
+// activation has already ended (C99 7.13.2.1), and a thin wrapper that calls
+// `setjmp` and immediately `return`s has ended by the time any later
+// `longjmp` fires (confirmed empirically on this system: that shape
+// segfaults). `arcis_try_push` below is safe to wrap in a normal function
+// specifically *because* it never calls `setjmp` itself — it only hands
+// back a `jmp_buf*` for the Cranelift-generated `try` code to pass to a
+// directly-called `setjmp` (declared as an extern in `rt.rs`, resolved
+// against libc's real `setjmp` symbol — confirmed present as a callable
+// symbol, not just a header macro, on this target).
+//
+// Caveat (documented, not hidden — see docs/language-reference.md): a
+// `longjmp` unwinds past any `arcis_string_drop`/`arcis_vec_drop`/
+// `arcis_object_drop` calls that would otherwise run for locals in the
+// frames it skips, leaking their heap allocations. Acceptable for v1 since
+// exceptions are exceptional, not a hot-loop pattern.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define ARCIS_MAX_TRY_DEPTH 64
+static jmp_buf arcis_try_stack[ARCIS_MAX_TRY_DEPTH];
+static int arcis_try_depth = 0;
+static ArcisString* arcis_thrown_value_slot = NULL;
+
+// Reserve the next `jmp_buf` slot and hand back a pointer to it. Safe to
+// call normally (returns immediately, never touches `setjmp`/`longjmp`
+// itself) — the caller (Cranelift-generated code) passes the returned
+// pointer to a *directly*-called `setjmp`.
+void* arcis_try_push(void) {
+    if (arcis_try_depth >= ARCIS_MAX_TRY_DEPTH) {
+        fputs("arcis: too many nested try blocks\n", stderr);
+        abort();
+    }
+    void* buf = (void*)&arcis_try_stack[arcis_try_depth];
+    arcis_try_depth++;
+    return buf;
+}
+
+void arcis_try_end(void) {
+    if (arcis_try_depth > 0) {
+        arcis_try_depth--;
+    }
+}
+
+void arcis_throw(int64_t msg_handle) {
+    arcis_thrown_value_slot = (ArcisString*)(intptr_t)msg_handle;
+    if (arcis_try_depth == 0) {
+        // Uncaught: no enclosing `try` to jump back to.
+        ArcisString* s = arcis_thrown_value_slot;
+        fputs("uncaught exception: ", stderr);
+        if (s != NULL && s->ptr != NULL) {
+            fwrite(s->ptr, 1, s->len, stderr);
+        }
+        fputc('\n', stderr);
+        abort();
+    }
+    // Jump back into `arcis_try_begin`'s call site for the innermost open
+    // `try`; that call then returns 1 instead of 0.
+    longjmp(arcis_try_stack[arcis_try_depth - 1], 1);
+}
+
+int64_t arcis_thrown_value(void) {
+    return (int64_t)(intptr_t)arcis_thrown_value_slot;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -381,6 +455,14 @@ void arcis_vec_push(ArcisVec* v, int64_t elem) {
     v->elements[v->len++] = elem;
 }
 
+// `[...src, ...]` array spread: append every element of `src` to `dest`.
+void arcis_vec_extend(ArcisVec* dest, ArcisVec* src) {
+    if (dest == NULL || src == NULL) return;
+    for (int32_t i = 0; i < src->len; i++) {
+        arcis_vec_push(dest, src->elements[i]);
+    }
+}
+
 int64_t arcis_vec_pop(ArcisVec* v) {
     if (v == NULL || v->len == 0) return 0;
     return v->elements[--v->len];
@@ -476,6 +558,20 @@ void arcis_object_set(ArcisObject* obj, ArcisString* key, int64_t value) {
     obj->fields[obj->count].key_handle = cloned;
     obj->fields[obj->count].value = value;
     obj->count++;
+}
+
+// `{ ...src, ... }` object spread: copy every field of `src` into `dest`
+// (overwriting on key collision, same as `arcis_object_set`). Runs entirely
+// in C since `ArcisObject` has no key-enumeration primitive exposed to
+// Cranelift.
+void arcis_object_merge(ArcisObject* dest, ArcisObject* src) {
+    if (dest == NULL || src == NULL) return;
+    for (int32_t i = 0; i < src->count; i++) {
+        ArcisField* f = &src->fields[i];
+        if (f->key_handle != NULL) {
+            arcis_object_set(dest, f->key_handle, f->value);
+        }
+    }
 }
 
 int64_t arcis_object_get(ArcisObject* obj, ArcisString* key) {

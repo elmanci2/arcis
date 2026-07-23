@@ -54,6 +54,10 @@ pub(crate) fn emit(
                 let v = builder.use_var(var);
                 let ty = fctx.ty(name).unwrap_or(ArcisType::Number);
                 Ok((v, ty))
+            } else if let Some(init) = fctx.global_const(name).cloned() {
+                // Module-level or imported constant: re-emit its
+                // initializer in place (there is no data symbol behind it).
+                emit(builder, fctx, &init, runtime, user_fns, module)
             } else if name == "sys" {
                 Err("`sys` is a namespace — use sys.X() or sys.ns.method()".to_string())
             } else {
@@ -92,7 +96,7 @@ pub(crate) fn emit(
                         return Err("str() takes exactly 1 argument".to_string());
                     }
                     let (val, ty) = emit(builder, fctx, &args[0], runtime, user_fns, module)?;
-                    let handle = promote_to_string(builder, val, ty, module, runtime)?;
+                    let handle = promote_to_string(builder, fctx, val, ty, module, runtime)?;
                     return Ok((handle, ArcisType::String));
                 }
                 if fname == "isNaN" {
@@ -141,6 +145,17 @@ pub(crate) fn emit(
                         }
                     }
                 }
+                // Namespace-qualified call: `u.f(args)` where `u` is a
+                // namespace import — registered under a `"u.f"` key.
+                if let Expr::Ident(ns) = object.as_ref() {
+                    let qualified = format!("{}.{}", ns, property);
+                    if let Some(fn_info) = user_fns.get(&qualified) {
+                        let result = emit_user_call(
+                            builder, fctx, fn_info, &qualified, args, runtime, user_fns, module,
+                        )?;
+                        return Ok(result);
+                    }
+                }
                 // Regular method call: arr.push(x) / s.toUpperCase() / etc.
                 if !is_sys {
                     let dispatched = crate::method::emit(
@@ -173,6 +188,14 @@ pub(crate) fn emit(
                     })?;
                     let v = builder.ins().f64const(value);
                     return Ok((v, ArcisType::Number));
+                }
+            }
+            // Namespace-qualified constant: `u.CONST` where `u` is a
+            // namespace import — registered under a `"u.CONST"` key.
+            if let Expr::Ident(ns) = object.as_ref() {
+                let qualified = format!("{}.{}", ns, property);
+                if let Some(init) = fctx.global_const(&qualified).cloned() {
+                    return emit(builder, fctx, &init, runtime, user_fns, module);
                 }
             }
             // sys.args / sys.X member access
@@ -220,11 +243,25 @@ pub(crate) fn emit(
             let (obj_val, obj_ty) = emit(builder, fctx, object, runtime, user_fns, module)?;
             if obj_ty == ArcisType::Object {
                 // Look up the field type from the object's declared shape.
-                let field_ty = if let Expr::Ident(obj_name) = object.as_ref() {
-                    fctx.object_field_ty(obj_name, property)
-                } else {
-                    None
-                };
+                // `arr[i].field` reads the shape tracked for the array
+                // binding itself (set for `T[]` annotations).
+                let field_ty = match object.as_ref() {
+                    Expr::Ident(obj_name) => fctx.object_field_ty(obj_name, property),
+                    Expr::Index { object: arr, .. } => match arr.as_ref() {
+                        Expr::Ident(arr_name) => fctx.object_field_ty(arr_name, property),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+                // Untracked shape: the runtime's own `ArcisProcess` object
+                // (`sys.process(...)` result) has a fixed field layout.
+                .or(match property.as_str() {
+                    "stdout" | "stderr" => Some(ArcisType::String),
+                    "exitCode" => Some(ArcisType::Number),
+                    _ => None,
+                })
+                // Last resort: the program-wide field-name → type map.
+                .or_else(|| fctx.global_field_types.get(property).copied());
                 let key_handle = emit_string_literal(
                     builder, fctx, module, property, runtime,
                 )?;
@@ -239,6 +276,10 @@ pub(crate) fn emit(
                         let as_i8 = builder.ins().ireduce(I8, raw);
                         return Ok((as_i8, ArcisType::Boolean));
                     }
+                    // Nested objects / arrays stay I64 handles.
+                    Some(ty @ (ArcisType::Object | ArcisType::Array)) => {
+                        return Ok((raw, ty));
+                    }
                     _ => {
                         // Default: interpret as f64 number.
                         let as_f64 = builder.ins().bitcast(F64, MemFlags::new(), raw);
@@ -247,8 +288,10 @@ pub(crate) fn emit(
                 }
             }
             Err(format!(
-                "member access `.{}` is not yet supported by the Cranelift backend",
-                property
+                "member access `.{}` on a `{}`-typed value (receiver: {:?}) is not supported by the Cranelift backend",
+                property,
+                obj_ty.name(),
+                object
             ))
         }
         Expr::Index { object, index } => {
@@ -439,8 +482,8 @@ fn emit_binary(
     // `print("label: " + value)` — otherwise this bit-for-bit-matches the
     // most common `print` pattern in every example and would reject it.
     if matches!(op, BinOp::Add) && (lt == ArcisType::String || rt == ArcisType::String) {
-        let lv = if lt == ArcisType::String { lv } else { promote_to_string(builder, lv, lt, module, runtime)? };
-        let rv = if rt == ArcisType::String { rv } else { promote_to_string(builder, rv, rt, module, runtime)? };
+        let lv = if lt == ArcisType::String { lv } else { promote_to_string(builder, fctx, lv, lt, module, runtime)? };
+        let rv = if rt == ArcisType::String { rv } else { promote_to_string(builder, fctx, rv, rt, module, runtime)? };
         let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
         let call = builder.ins().call(callee, &[lv, rv]);
         let handle = builder.inst_results(call)[0];
@@ -575,15 +618,9 @@ fn emit_user_call(
     let call = builder.ins().call(callee, &arg_vals);
     let results = builder.inst_results(call);
     let result_val = results.first().copied();
-    let result_ty = {
-        let decl = module.declarations().get_function_decl(func_id);
-        match decl.signature.returns.first() {
-            Some(param) if param.value_type == F64 => ArcisType::Number,
-            Some(param) if param.value_type == I8 => ArcisType::Boolean,
-            Some(param) if param.value_type == I64 => ArcisType::String,
-            _ => ArcisType::Void,
-        }
-    };
+    // The declared Arcis return type — the machine signature can't tell
+    // `string` / `array` / `object` apart (all I64 handles).
+    let result_ty = fn_info.ret;
     let v = result_val.unwrap_or_else(|| {
         // Void: provide a poison I8 zero so the return tuple has a Value.
         // The caller is expected to discard this when the type is Void.
@@ -660,6 +697,7 @@ fn emit_string_length(
 
 pub(crate) fn promote_to_string(
     builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
     value: cranelift_codegen::ir::Value,
     ty: ArcisType,
     module: &mut ObjectModule,
@@ -680,9 +718,12 @@ pub(crate) fn promote_to_string(
             let call = builder.ins().call(callee, &[widened]);
             Ok(builder.inst_results(call)[0])
         }
-        ArcisType::Void => Err("cannot promote void to string".to_string()),
-        ArcisType::Array => Err("cannot promote array to string".to_string()),
-        ArcisType::Object => Err("cannot promote object to string".to_string()),
+        // Matches JavaScript's String() on these values. `object` also
+        // covers `any`-typed values whose concrete type couldn't be
+        // inferred — printing a placeholder beats refusing to compile.
+        ArcisType::Void => emit_string_literal(builder, fctx, module, "undefined", runtime),
+        ArcisType::Array => emit_string_literal(builder, fctx, module, "[array]", runtime),
+        ArcisType::Object => emit_string_literal(builder, fctx, module, "[object Object]", runtime),
     }
 }
 

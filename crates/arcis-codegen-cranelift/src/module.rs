@@ -43,8 +43,44 @@ pub(crate) fn emit(
 ) -> Result<(), String> {
     let runtime = Runtime::declare(obj_module)?;
     let reassigned = collect_reassigned(&m.program);
-    let enums = collect_enums(&m.program);
+    // Enums resolve to compile-time constants, so collect them from EVERY
+    // linked module — `Category.Electronics` must work in any module, not
+    // just the one that declares the enum.
+    let mut enums = collect_enums(&m.program);
+    for other in all_modules {
+        for (name, table) in collect_enums(&other.program) {
+            enums.entry(name).or_insert(table);
+        }
+    }
     let enum_names: std::collections::HashSet<String> = enums.keys().cloned().collect();
+    // Type-level names (interfaces / type aliases / enums, any module):
+    // importing one is valid Arcis but there is no function symbol behind
+    // it — skip them when declaring imported functions.
+    let type_level_names = collect_type_level_names(all_modules);
+    // Module-level constants visible inside function bodies: the module's
+    // own top-level `let`/`const` initializers (non-root — in the root they
+    // are ordinary `arcis_main` locals) plus imported constants, collected
+    // below while walking the import statements.
+    let mut global_consts: HashMap<String, arcis_ast::Expr> = HashMap::new();
+    if !is_root {
+        for stmt in &m.program.stmts {
+            let inner = match stmt {
+                Stmt::ExportDecl(inner) => inner.as_ref(),
+                other => other,
+            };
+            match inner {
+                Stmt::Let { name, value, .. } | Stmt::Const { name, value, .. }
+                    if !matches!(value, arcis_ast::Expr::Arrow { .. }) =>
+                {
+                    global_consts.insert(name.clone(), value.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    // Program-wide field-name → type fallback for member accesses whose
+    // receiver has no tracked per-variable shape.
+    let global_field_types = collect_global_field_types(all_modules, &enum_names);
     // Top-level `let name = (params) => body;` — lambda-lifted into a
     // synthetic top-level function (sound because Arcis arrows never
     // capture), declared/defined via the exact same path as `function`.
@@ -57,40 +93,44 @@ pub(crate) fn emit(
     let mut user_fns: HashMap<String, FnInfo> = HashMap::new();
     for (name, f) in &arrow_fns {
         let params = param_types(f, &enum_names);
+        let ret = return_type_of(f, &enum_names);
         let sig = function_signature(obj_module, f, &enum_names);
         let id = obj_module
             .declare_function(name, Linkage::Export, &sig)
             .map_err(|e| format!("declare arrow `{}`: {}", name, e))?;
-        user_fns.insert(name.clone(), FnInfo { id, params });
+        user_fns.insert(name.clone(), FnInfo { id, params, ret });
     }
     for stmt in &m.program.stmts {
         match stmt {
             Stmt::Function(f) => {
                 let params = param_types(f, &enum_names);
+                let ret = return_type_of(f, &enum_names);
                 let sig = function_signature(obj_module, f, &enum_names);
                 let id = obj_module
                     .declare_function(f.name.as_str(), Linkage::Export, &sig)
                     .map_err(|e| format!("declare `{}`: {}", f.name, e))?;
-                user_fns.insert(f.name.clone(), FnInfo { id, params });
+                user_fns.insert(f.name.clone(), FnInfo { id, params, ret });
             }
             Stmt::ExportDecl(inner) => {
                 if let Stmt::Function(f) = inner.as_ref() {
                     let params = param_types(f, &enum_names);
+                    let ret = return_type_of(f, &enum_names);
                     let sig = function_signature(obj_module, f, &enum_names);
                     let id = obj_module
                         .declare_function(f.name.as_str(), Linkage::Export, &sig)
                         .map_err(|e| format!("declare export `{}`: {}", f.name, e))?;
-                    user_fns.insert(f.name.clone(), FnInfo { id, params });
+                    user_fns.insert(f.name.clone(), FnInfo { id, params, ret });
                 }
             }
             Stmt::ExportDefault(arcis_ast::ExportDefault::Function(f)) => {
                 let name = if f.name.is_empty() { "__default".into() } else { f.name.clone() };
                 let params = param_types(f, &enum_names);
+                let ret = return_type_of(f, &enum_names);
                 let sig = function_signature(obj_module, f, &enum_names);
                 let id = obj_module
                     .declare_function(&name, Linkage::Export, &sig)
                     .map_err(|e| format!("declare export default `{}`: {}", name, e))?;
-                user_fns.insert(name, FnInfo { id, params });
+                user_fns.insert(name, FnInfo { id, params, ret });
             }
             _ => {}
         }
@@ -99,23 +139,96 @@ pub(crate) fn emit(
     // ── Process imports: declare imported functions as Import ─────────────
     for stmt in &m.program.stmts {
         match stmt {
-            Stmt::Import { module: path, .. } => {
+            Stmt::Import { module: path, alias } => {
                 if !path.first().map_or(false, |s| s == "sys") {
                     declare_imported_module(obj_module, &m.path, path, &export_info, &mut user_fns, &enum_names)?;
+                    // Qualified access through the namespace binding:
+                    // `u.f()` resolves via a `"u.f"` key in `user_fns`,
+                    // `u.CONST` via a `"u.CONST"` key in `global_consts`.
+                    let local_ns = alias
+                        .clone()
+                        .or_else(|| path.last().cloned())
+                        .unwrap_or_default();
+                    if !local_ns.is_empty() {
+                        if let Ok(arcis_linker::ModuleTarget::Local(dep_path)) =
+                            arcis_linker::resolve_specifier(&m.path, path)
+                        {
+                            if let Some(mod_exports) = export_info.get(&dep_path) {
+                                for (name, info) in mod_exports {
+                                    let sig = import_sig_from_func(&info.func, &enum_names);
+                                    let params = param_types(&info.func, &enum_names);
+                                    let ret = return_type_of(&info.func, &enum_names);
+                                    let id = obj_module
+                                        .declare_function(&info.symbol, Linkage::Import, &sig)
+                                        .map_err(|e| {
+                                            format!("declare import `{}`: {}", info.symbol, e)
+                                        })?;
+                                    user_fns.insert(
+                                        format!("{}.{}", local_ns, name),
+                                        FnInfo { id, params, ret },
+                                    );
+                                }
+                            }
+                        }
+                        for (cname, cinit) in
+                            collect_exported_consts(&m.path, path, all_modules)
+                        {
+                            global_consts
+                                .entry(format!("{}.{}", local_ns, cname))
+                                .or_insert(cinit);
+                        }
+                    }
                 }
             }
             Stmt::FromImport { module: path, names, wildcard } => {
                 if !path.first().map_or(false, |s| s == "sys") {
                     if *wildcard {
                         declare_imported_module(obj_module, &m.path, path, &export_info, &mut user_fns, &enum_names)?;
+                        // Wildcard also brings every exported constant in.
+                        for (cname, cinit) in
+                            collect_exported_consts(&m.path, path, all_modules)
+                        {
+                            global_consts.entry(cname).or_insert(cinit);
+                        }
                     } else {
                         for n in names {
+                            if type_level_names.contains(&n.name) {
+                                continue;
+                            }
                             let local = n.alias.clone().unwrap_or_else(|| n.name.clone());
-                            let (sig, params) = lookup_export_sig_and_params(&m.path, path, &n.name, &export_info, &enum_names)?;
+                            // `default` refers to the target module's
+                            // `export default` — resolve its real name.
+                            let lookup = if n.name == "default" {
+                                match resolve_default_name(&m.path, path, all_modules) {
+                                    Some(real) => real,
+                                    None => {
+                                        return Err(format!(
+                                            "`{}` has no default export",
+                                            path.join(".")
+                                        ))
+                                    }
+                                }
+                            } else {
+                                n.name.clone()
+                            };
+                            // Exported constants have no function symbol —
+                            // record the initializer for in-place re-emission.
+                            if let Some(init) =
+                                find_exported_const(&m.path, path, &lookup, all_modules)
+                            {
+                                global_consts.insert(local, init);
+                                continue;
+                            }
+                            let (sig, params, symbol, ret) = lookup_export_sig_and_params(&m.path, path, &lookup, &export_info, &enum_names)?;
+                            // Declare under the REAL exported symbol name —
+                            // that's what the target module's `.o` exports
+                            // (aliased re-exports keep the original symbol).
+                            // The local (possibly aliased) name only lives
+                            // in `user_fns` for call resolution.
                             let id = obj_module
-                                .declare_function(&local, Linkage::Import, &sig)
-                                .map_err(|e| format!("declare import `{}`: {}", local, e))?;
-                            user_fns.insert(local, FnInfo { id, params });
+                                .declare_function(&symbol, Linkage::Import, &sig)
+                                .map_err(|e| format!("declare import `{}`: {}", symbol, e))?;
+                            user_fns.insert(local, FnInfo { id, params, ret });
                         }
                     }
                 }
@@ -154,6 +267,8 @@ pub(crate) fn emit(
                 &runtime,
                 &reassigned,
                 &enums,
+                &global_consts,
+                &global_field_types,
                 obj_module,
             )?;
             obj_module
@@ -171,7 +286,7 @@ pub(crate) fn emit(
         let sig = function_signature(obj_module, f, &enum_names);
         let mut ctx = Context::new();
         ctx.func = Function::with_name_signature(UserFuncName::user(0, func_id.index() as u32), sig);
-        emit_function(&mut ctx.func, f, &user_fns, &runtime, &reassigned, &enums, obj_module)?;
+        emit_function(&mut ctx.func, f, &user_fns, &runtime, &reassigned, &enums, &global_consts, &global_field_types, obj_module)?;
         obj_module
             .define_function(func_id, &mut ctx)
             .map_err(|e| format!("define arrow `{}`: {}", name, e))?;
@@ -206,6 +321,8 @@ pub(crate) fn emit(
             builder.seal_block(entry);
 
             let mut fctx = FunctionCtx::new(&reassigned, &enums);
+            fctx.global_consts = global_consts.clone();
+            fctx.global_field_types = global_field_types.clone();
 
             for stmt in &m.program.stmts {
                 match stmt {
@@ -226,9 +343,19 @@ pub(crate) fn emit(
             builder.ins().return_(&[]);
             builder.finalize();
         }
-        obj_module
-            .define_function(main_id, &mut ctx)
-            .map_err(|e| format!("define arcis_main: {}", e))?;
+        if let Err(e) = obj_module.define_function(main_id, &mut ctx) {
+            // Re-run the verifier standalone to surface WHICH instruction
+            // is invalid — `define_function`'s error alone just says
+            // "Verifier errors".
+            let flags = cranelift_codegen::settings::Flags::new(
+                cranelift_codegen::settings::builder(),
+            );
+            let detail = match cranelift_codegen::verifier::verify_function(&ctx.func, &flags) {
+                Err(errs) => format!("\n{}\n{}", errs, ctx.func.display()),
+                Ok(()) => String::new(),
+            };
+            return Err(format!("define arcis_main: {}{}", e, detail));
+        }
     }
 
     Ok(())
@@ -284,6 +411,14 @@ pub(crate) fn arrow_to_function(
     }
 }
 
+/// The declared Arcis return type of `f`, lowered (void when unannotated).
+pub(crate) fn return_type_of(f: &arcis_ast::Function, enum_names: &std::collections::HashSet<String>) -> ArcisType {
+    if f.return_type.primitive_name() == "void" {
+        return ArcisType::Void;
+    }
+    from_ast(&f.return_type, enum_names).unwrap_or(ArcisType::Number)
+}
+
 pub(crate) fn param_types(f: &arcis_ast::Function, enum_names: &std::collections::HashSet<String>) -> Vec<ArcisType> {
     f.params
         .iter()
@@ -295,6 +430,10 @@ pub(crate) fn param_types(f: &arcis_ast::Function, enum_names: &std::collections
 
 struct ExportInfo {
     func: arcis_ast::Function,
+    /// The linker-level symbol name — the function's ORIGINAL name, which
+    /// is what its defining module exports. Differs from the map key for
+    /// aliased re-exports (`export { gritar as gritarFuerte }`).
+    symbol: String,
 }
 
 type ExportMap = HashMap<std::path::PathBuf, HashMap<String, ExportInfo>>;
@@ -307,31 +446,33 @@ fn build_export_map(all_modules: &[Module]) -> ExportMap {
             match stmt {
                 Stmt::Function(f) => {
                     if m.exports.named.contains(&f.name) || m.exports.default.as_deref() == Some(&f.name) {
-                        exports.insert(f.name.clone(), ExportInfo { func: f.clone() });
+                        exports.insert(f.name.clone(), ExportInfo { func: f.clone(), symbol: f.name.clone() });
                     }
                 }
                 Stmt::ExportDecl(inner) => {
                     if let Stmt::Function(f) = inner.as_ref() {
-                        exports.insert(f.name.clone(), ExportInfo { func: f.clone() });
+                        exports.insert(f.name.clone(), ExportInfo { func: f.clone(), symbol: f.name.clone() });
                     }
                 }
                 Stmt::ExportSpec(items) => {
                     for it in items {
                         if let Some(orig) = find_function_in_module(m, &it.name) {
                             let alias = it.alias.clone().unwrap_or_else(|| it.name.clone());
-                            exports.insert(alias, ExportInfo { func: orig.clone() });
+                            let symbol = orig.name.clone();
+                            exports.insert(alias, ExportInfo { func: orig.clone(), symbol });
                         }
                     }
                 }
                 Stmt::ExportDefault(ed) => {
                     let (name, func) = match ed {
                         arcis_ast::ExportDefault::Function(f) => {
-                            let n = if f.name.is_empty() { "__default".into() } else { f.name.clone() };
+                            let n: String = if f.name.is_empty() { "__default".into() } else { f.name.clone() };
                             (n, f.clone())
                         }
                         _ => continue,
                     };
-                    exports.insert(name, ExportInfo { func });
+                    let symbol = name.clone();
+                    exports.insert(name, ExportInfo { func, symbol });
                 }
                 _ => {}
             }
@@ -339,6 +480,192 @@ fn build_export_map(all_modules: &[Module]) -> ExportMap {
         map.insert(m.path.clone(), exports);
     }
     map
+}
+
+/// Names of every interface / type alias / enum declared in any module
+/// (including `export`-wrapped ones). Importing one of these is valid at
+/// the Arcis level but has no function symbol behind it.
+fn collect_type_level_names(all_modules: &[Module]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for m in all_modules {
+        for stmt in &m.program.stmts {
+            let inner = match stmt {
+                Stmt::ExportDecl(inner) => inner.as_ref(),
+                other => other,
+            };
+            match inner {
+                Stmt::TypeAlias { name, .. }
+                | Stmt::Interface { name, .. }
+                | Stmt::Enum { name, .. } => {
+                    out.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Program-wide `field name → ArcisType` map, collected from every object
+/// type reachable from any type annotation in any module. Fallback typing
+/// for member accesses on receivers without a tracked shape.
+fn collect_global_field_types(
+    all_modules: &[Module],
+    enum_names: &std::collections::HashSet<String>,
+) -> HashMap<String, ArcisType> {
+    fn from_type(
+        t: &arcis_ast::Type,
+        enum_names: &std::collections::HashSet<String>,
+        out: &mut HashMap<String, ArcisType>,
+    ) {
+        match t {
+            arcis_ast::Type::Object { fields, .. } => {
+                for (fname, fty, _) in fields {
+                    if let Ok(at) = from_ast(fty, enum_names) {
+                        out.insert(fname.clone(), at);
+                    }
+                    from_type(fty, enum_names, out);
+                }
+            }
+            arcis_ast::Type::Array(inner) => from_type(inner, enum_names, out),
+            arcis_ast::Type::Union(ms) | arcis_ast::Type::Intersection(ms) => {
+                for m in ms {
+                    from_type(m, enum_names, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn from_stmt(
+        stmt: &Stmt,
+        enum_names: &std::collections::HashSet<String>,
+        out: &mut HashMap<String, ArcisType>,
+    ) {
+        match stmt {
+            Stmt::Let { ty: Some(t), .. } | Stmt::Const { ty: Some(t), .. } => {
+                from_type(t, enum_names, out)
+            }
+            Stmt::ForOf { ty, body, .. } => {
+                if let Some(t) = ty {
+                    from_type(t, enum_names, out);
+                }
+                for s in body {
+                    from_stmt(s, enum_names, out);
+                }
+            }
+            Stmt::Function(f) => {
+                for p in &f.params {
+                    from_type(&p.ty, enum_names, out);
+                }
+                from_type(&f.return_type, enum_names, out);
+                for s in &f.body {
+                    from_stmt(s, enum_names, out);
+                }
+            }
+            Stmt::Interface { fields, .. } => {
+                for (fname, fty, _) in fields {
+                    if let Ok(at) = from_ast(fty, enum_names) {
+                        out.insert(fname.clone(), at);
+                    }
+                    from_type(fty, enum_names, out);
+                }
+            }
+            Stmt::TypeAlias { ty, .. } => from_type(ty, enum_names, out),
+            Stmt::ExportDecl(inner) => from_stmt(inner, enum_names, out),
+            Stmt::ExportDefault(arcis_ast::ExportDefault::Function(f)) => {
+                for p in &f.params {
+                    from_type(&p.ty, enum_names, out);
+                }
+                from_type(&f.return_type, enum_names, out);
+                for s in &f.body {
+                    from_stmt(s, enum_names, out);
+                }
+            }
+            Stmt::If { then_branch, else_branch, .. } => {
+                for s in then_branch {
+                    from_stmt(s, enum_names, out);
+                }
+                if let Some(eb) = else_branch {
+                    for s in eb {
+                        from_stmt(s, enum_names, out);
+                    }
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                for s in body {
+                    from_stmt(s, enum_names, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = HashMap::new();
+    for m in all_modules {
+        for stmt in &m.program.stmts {
+            from_stmt(stmt, enum_names, &mut out);
+        }
+    }
+    out
+}
+
+/// The initializer expression of an exported top-level `let`/`const` named
+/// `name` in the module referenced by `path`, if any.
+fn find_exported_const(
+    importer: &std::path::Path,
+    path: &[String],
+    name: &str,
+    all_modules: &[Module],
+) -> Option<arcis_ast::Expr> {
+    collect_exported_consts(importer, path, all_modules)
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, e)| e)
+}
+
+/// Every exported top-level `let`/`const` of the module referenced by
+/// `path`, as `(name, initializer)` pairs.
+fn collect_exported_consts(
+    importer: &std::path::Path,
+    path: &[String],
+    all_modules: &[Module],
+) -> Vec<(String, arcis_ast::Expr)> {
+    let Ok(arcis_linker::ModuleTarget::Local(dep_path)) =
+        arcis_linker::resolve_specifier(importer, path)
+    else {
+        return Vec::new();
+    };
+    let Some(dep) = all_modules.iter().find(|m| m.path == dep_path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for stmt in &dep.program.stmts {
+        if let Stmt::ExportDecl(inner) = stmt {
+            match inner.as_ref() {
+                Stmt::Let { name, value, .. } | Stmt::Const { name, value, .. }
+                    if !matches!(value, arcis_ast::Expr::Arrow { .. }) =>
+                {
+                    out.push((name.clone(), value.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Resolve the real symbol name of the target module's default export.
+fn resolve_default_name(
+    importer: &std::path::Path,
+    path: &[String],
+    all_modules: &[Module],
+) -> Option<String> {
+    match arcis_linker::resolve_specifier(importer, path).ok()? {
+        arcis_linker::ModuleTarget::Local(dep_path) => all_modules
+            .iter()
+            .find(|m| m.path == dep_path)
+            .and_then(|m| m.exports.default.clone()),
+        _ => None,
+    }
 }
 
 fn find_function_in_module(m: &Module, name: &str) -> Option<arcis_ast::Function> {
@@ -367,7 +694,7 @@ fn lookup_export_sig_and_params(
     name: &str,
     export_map: &ExportMap,
     enum_names: &std::collections::HashSet<String>,
-) -> Result<(cranelift_codegen::ir::Signature, Vec<ArcisType>), String> {
+) -> Result<(cranelift_codegen::ir::Signature, Vec<ArcisType>, String, ArcisType), String> {
     let target = arcis_linker::resolve_specifier(importer, path).map_err(|e| e)?;
     match target {
         arcis_linker::ModuleTarget::Local(dep_path) => {
@@ -379,7 +706,8 @@ fn lookup_export_sig_and_params(
             })?;
             let sig = import_sig_from_func(&info.func, enum_names);
             let params = param_types(&info.func, enum_names);
-            Ok((sig, params))
+            let ret = return_type_of(&info.func, enum_names);
+            Ok((sig, params, info.symbol.clone(), ret))
         }
         _ => Err(format!("`{}` is not a local module", path.join("."))),
     }
@@ -393,7 +721,7 @@ fn lookup_export_sig(
     export_map: &ExportMap,
     enum_names: &std::collections::HashSet<String>,
 ) -> Result<cranelift_codegen::ir::Signature, String> {
-    lookup_export_sig_and_params(importer, path, name, export_map, enum_names).map(|(s, _)| s)
+    lookup_export_sig_and_params(importer, path, name, export_map, enum_names).map(|(s, _, _, _)| s)
 }
 
 fn declare_imported_module(
@@ -414,10 +742,11 @@ fn declare_imported_module(
                 if user_fns.contains_key(name) { continue; }
                 let sig = import_sig_from_func(&info.func, enum_names);
                 let params = param_types(&info.func, enum_names);
+                let ret = return_type_of(&info.func, enum_names);
                 let id = obj_module
-                    .declare_function(name, Linkage::Import, &sig)
-                    .map_err(|e| format!("declare import `{}`: {}", name, e))?;
-                user_fns.insert(name.clone(), FnInfo { id, params });
+                    .declare_function(&info.symbol, Linkage::Import, &sig)
+                    .map_err(|e| format!("declare import `{}`: {}", info.symbol, e))?;
+                user_fns.insert(name.clone(), FnInfo { id, params, ret });
             }
         }
         _ => {

@@ -22,21 +22,9 @@ use arcis_lexer::TokenKind;
 use crate::error::ParseError;
 use crate::state::Parser;
 
-/// Generate a deterministic identifier for an inline object type, based on
-/// the hash of its field shape (name, type, optional-ness). Same shape →
-/// same name → same struct.
-pub(crate) fn object_type_name(fields: &[(String, Box<Type>, bool)]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut h = DefaultHasher::new();
-    for (k, t, opt) in fields {
-        k.hash(&mut h);
-        t.primitive_name().hash(&mut h);
-        opt.hash(&mut h);
-    }
-    format!("__Obj{:x}", h.finish() & 0xFFFFFF)
-}
+// Deterministic inline-object-type naming — shared with the type-inference
+// pass, so it lives in `arcis-ast`.
+pub(crate) use arcis_ast::object_type_name;
 
 impl Parser {
     /// Parse a type annotation. Entry point: union types (the loosest

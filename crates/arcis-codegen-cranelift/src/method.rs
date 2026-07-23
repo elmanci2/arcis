@@ -273,7 +273,8 @@ fn resolve_callback(
             // Build + define its body via a fresh `Context`, independent of
             // whatever function is currently mid-build in the caller.
             let mut inner_user_fns = user_fns.clone();
-            inner_user_fns.insert(synth_name.clone(), FnInfo { id, params: param_tys.clone() });
+            let synth_ret = crate::module::return_type_of(&synthetic, &fctx.enum_names().clone());
+            inner_user_fns.insert(synth_name.clone(), FnInfo { id, params: param_tys.clone(), ret: synth_ret });
             let reassigned = crate::collect::collect_reassigned(&arcis_ast::Program { stmts: synthetic.body.clone() });
             let mut ctx = cranelift_codegen::Context::new();
             ctx.func = cranelift_codegen::ir::Function::with_name_signature(
@@ -283,7 +284,9 @@ fn resolve_callback(
                 }),
                 sig,
             );
-            crate::function::emit_function(&mut ctx.func, &synthetic, &inner_user_fns, runtime, &reassigned, fctx.enums(), module)?;
+            let __gc = fctx.global_consts.clone();
+            let __gf = fctx.global_field_types.clone();
+            crate::function::emit_function(&mut ctx.func, &synthetic, &inner_user_fns, runtime, &reassigned, fctx.enums(), &__gc, &__gf, module)?;
             module
                 .define_function(id, &mut ctx)
                 .map_err(|e| format!("define inline arrow `{}`: {}", synth_name, e))?;

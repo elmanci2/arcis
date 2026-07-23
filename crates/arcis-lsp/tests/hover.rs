@@ -19,7 +19,7 @@ fn markdown(h: async_lsp::lsp_types::Hover) -> String {
 fn hover_on_keyword_returns_signature_and_doc() {
     // Cursor sits right after `let`, with the rest of the line trailing
     // in the "after" segment. The identifier under the cursor is `let`.
-    let h = hover_at("let", " x = 0;").expect("hover should be present for `let`");
+    let h = hover_at("let x = 0;", "let", " x = 0;").expect("hover should be present for `let`");
     let body = markdown(h);
     assert!(body.contains("let"), "body should mention `let`: {body}");
     assert!(
@@ -31,7 +31,7 @@ fn hover_on_keyword_returns_signature_and_doc() {
 #[test]
 fn hover_on_top_level_sys_read_file() {
     // Cursor sits after `sys.read` but before continuing into `File(...)`.
-    let h = hover_at("sys.read", "File(p)")
+    let h = hover_at("sys.readFile(p)", "sys.read", "File(p)")
         .expect("hover should be present for `sys.readFile`");
     let body = markdown(h);
     assert!(body.contains("sys.readFile"));
@@ -41,7 +41,7 @@ fn hover_on_top_level_sys_read_file() {
 
 #[test]
 fn hover_on_namespace_method() {
-    let h = hover_at("sys.env.", "get(name)")
+    let h = hover_at("sys.env.get(name)", "sys.env.", "get(name)")
         .expect("hover should be present for env.get");
     let body = markdown(h);
     assert!(body.contains("sys.env.get"));
@@ -51,10 +51,27 @@ fn hover_on_namespace_method() {
 #[test]
 fn hover_in_whitespace_returns_none_or_label() {
     // Cursor is between two spaces — no identifier under the cursor.
-    let h = hover_at("let x =  ", ";");
+    let h = hover_at("let x =  ;", "let x =  ", ";");
     // It's OK if either Some or None — but if Some, the label must be meaningful.
     if let Some(h) = h {
         let body = markdown(h);
         assert!(body.len() > 0);
     }
+}
+
+#[test]
+fn hover_on_inferred_let_shows_type() {
+    // `x` has no annotation — hover must show the inferred `number`.
+    let text = "let x = 42;\nprint(x);\n";
+    let h = hover_at(text, "let ", "x = 42;").expect("hover for user symbol");
+    let body = markdown(h);
+    assert!(body.contains("number"), "inferred type shown: {body}");
+}
+
+#[test]
+fn hover_on_inferred_function_return() {
+    let text = "function dbl(n: number) {\n    return n * 2;\n}\n";
+    let h = hover_at(text, "function db", "l(n: number) {").expect("hover for function");
+    let body = markdown(h);
+    assert!(body.contains("number"), "inferred return type shown: {body}");
 }

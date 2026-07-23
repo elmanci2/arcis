@@ -28,6 +28,8 @@ pub(crate) fn emit_function(
     runtime: &Runtime,
     reassigned: &HashSet<String>,
     enums: &HashMap<String, HashMap<String, f64>>,
+    global_consts: &HashMap<String, arcis_ast::Expr>,
+    global_field_types: &HashMap<String, ArcisType>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     let mut builder_ctx = FunctionBuilderContext::new();
@@ -36,6 +38,8 @@ pub(crate) fn emit_function(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let mut fctx = FunctionCtx::new(reassigned, enums);
+    fctx.global_consts = global_consts.clone();
+    fctx.global_field_types = global_field_types.clone();
     let enum_names: std::collections::HashSet<String> = enums.keys().cloned().collect();
 
     // Bind each Arcis parameter to a Cranelift variable populated from the
@@ -44,6 +48,17 @@ pub(crate) fn emit_function(
     for (i, p) in f.params.iter().enumerate() {
         let ty = from_ast(&p.ty, &enum_names).unwrap_or(ArcisType::Number);
         fctx.define(&p.name, ty, block_params[i], &mut builder);
+        // Track array element types and object field shapes so member /
+        // index accesses on the parameter are correctly typed.
+        if let Some(inner) = p.ty.array_inner() {
+            if let Ok(elem) = from_ast(inner, &enum_names) {
+                fctx.set_element_ty(&p.name, elem);
+            }
+        }
+        let object_source = p.ty.array_inner().unwrap_or(&p.ty);
+        if let Some(fields) = object_source.object_fields() {
+            fctx.set_object_fields(&p.name, fields);
+        }
     }
 
     for stmt in &f.body {

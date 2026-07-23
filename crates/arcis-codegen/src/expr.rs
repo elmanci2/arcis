@@ -153,6 +153,13 @@ fn emit_member(out: &mut String, object: &Expr, property: &str, ctx: &Ctx) {
             out.push_str(property);
             return;
         }
+        // Namespace-import member access: `utils.item` -> `utils::item`.
+        if ctx.namespace_names.contains(module) {
+            out.push_str(module);
+            out.push_str("::");
+            out.push_str(property);
+            return;
+        }
     }
     // `.length` is special-cased based on the type:
     //   string → `.chars().count() as f64` (Unicode codepoints)
@@ -389,13 +396,7 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
             if i > 0 {
                 out.push_str(", ");
             }
-            // Auto-`&` for array-typed identifier arguments.
-            if let Expr::Ident(ref n) = a {
-                if ctx.types.get(n).map(|t| t.ends_with("[]")).unwrap_or(false) {
-                    out.push('&');
-                }
-            }
-            emit(out, a, ctx);
+            emit_arg(out, a, ctx);
         }
         out.push(')');
         return;
@@ -407,7 +408,40 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
         if i > 0 {
             out.push_str(", ");
         }
-        emit(out, a, ctx);
+        emit_arg(out, a, ctx);
     }
     out.push(')');
+}
+
+/// Emit one call argument. TS passes variables to functions without giving
+/// them up, so a *place* expression (`x`, `obj.field`, `arr[i]`) must not be
+/// moved out of — Rust would reject any later use of the source
+/// (use-after-move / E0507). Arrays are auto-borrowed (`&arr`, matching the
+/// `&Vec<T>` parameter convention); other places are cloned unless their
+/// declared type is `Copy` (`number` / `boolean`). Non-place expressions
+/// (literals, call results, arithmetic) are emitted as-is.
+fn emit_arg(out: &mut String, a: &Expr, ctx: &Ctx) {
+    match a {
+        Expr::Ident(n) => {
+            let declared = ctx.types.get(n).map(|s| s.as_str());
+            if declared.map(|t| t.ends_with("[]")).unwrap_or(false) {
+                out.push('&');
+                emit(out, a, ctx);
+            } else if matches!(declared, Some("number") | Some("boolean")) {
+                emit(out, a, ctx);
+            } else {
+                emit(out, a, ctx);
+                out.push_str(".clone()");
+            }
+        }
+        // `.length` lowers to `.len() as f64` (a value, and `as` binds
+        // looser than a trailing method call) — never clone it.
+        Expr::Member { property, .. } if property == "length" => emit(out, a, ctx),
+        Expr::Member { .. } | Expr::Index { .. } => {
+            out.push('(');
+            emit(out, a, ctx);
+            out.push_str(").clone()");
+        }
+        _ => emit(out, a, ctx),
+    }
 }

@@ -49,6 +49,38 @@ mod stmt;
 mod sys;
 mod types;
 
+/// Resolve every interface name, type alias, and enum name used in *type
+/// position* across all modules, rewriting `Type::Named(...)` to the
+/// underlying type (`Type::Object` for interfaces/object aliases, `number`
+/// for enums, etc.). Backend-independent: the Rust backend runs this inside
+/// [`generate_all`], and the driver runs it before handing modules to the
+/// Cranelift backend so both see the same fully-resolved ASTs.
+pub fn resolve_program_types(modules: &[Module]) -> Vec<Module> {
+    use std::collections::HashMap;
+
+    let interfaces = collect::collect_interfaces(modules);
+    let interfaces_map: HashMap<String, arcis_ast::Type> = interfaces
+        .iter()
+        .map(|t| (t.struct_name().unwrap_or_default().to_string(), t.clone()))
+        .collect();
+    let global_aliases = collect::collect_global_aliases(modules);
+    let mut extra = interfaces_map;
+    for (name, ty) in global_aliases {
+        extra.entry(name).or_insert(ty);
+    }
+    for (name, _) in collect::collect_enums(modules) {
+        extra.entry(name).or_insert_with(arcis_ast::Type::number);
+    }
+    modules
+        .iter()
+        .map(|m| {
+            let mut m = m.clone();
+            collect::resolve_type_aliases(&mut m.program, &extra);
+            m
+        })
+        .collect()
+}
+
 /// Generate the Rust source code for every module of the program.
 /// Returns `(id, rust_source)` per module; the first element is the root.
 pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String> {
@@ -69,12 +101,26 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     // name, to its underlying `Type::Object` before any other pass runs, so
     // the rest of codegen never has to special-case `Type::Named` pointing
     // at either kind of declaration (object-literal emission only knows how
-    // to read fields off `Type::Object`).
+    // to read fields off `Type::Object`). Top-level aliases are collected
+    // globally so they resolve across module boundaries; a module's own
+    // (function-local) aliases still take priority on a name collision.
+    let global_aliases = collect::collect_global_aliases(modules);
+    let mut extra = interfaces_map.clone();
+    for (name, ty) in &global_aliases {
+        extra.entry(name.clone()).or_insert_with(|| ty.clone());
+    }
+    // Enum names used in TYPE position erase to `number` (TS numeric-enum
+    // semantics; the variants themselves are `f64` consts — see
+    // `types::emit_enum_def`). Collected from the original modules since
+    // enum declarations aren't affected by alias resolution.
+    for (name, _) in collect::collect_enums(modules) {
+        extra.entry(name).or_insert_with(arcis_ast::Type::number);
+    }
     let modules: Vec<Module> = modules
         .iter()
         .map(|m| {
             let mut m = m.clone();
-            collect::resolve_type_aliases(&mut m.program, &interfaces_map);
+            collect::resolve_type_aliases(&mut m.program, &extra);
             m
         })
         .collect();
@@ -115,6 +161,14 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     let enum_names: std::collections::HashSet<String> =
         enums.iter().map(|(name, _)| name.clone()).collect();
 
+    // Every type-level name (interface / alias / enum): importing one is
+    // valid Arcis, but emits no Rust `use` (they live in the root or are
+    // erased entirely).
+    let mut type_level_names: std::collections::HashSet<String> =
+        interfaces_map.keys().cloned().collect();
+    type_level_names.extend(global_aliases.keys().cloned());
+    type_level_names.extend(enum_names.iter().cloned());
+
     // Canonical-path → id map, for resolving `use crate::<id>::...`.
     let path_to_id: HashMap<std::path::PathBuf, String> = modules
         .iter()
@@ -124,7 +178,16 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     let mut out = Vec::with_capacity(modules.len());
     for (i, m) in modules.iter().enumerate() {
         let is_root = i == 0;
-        let src = module::generate(m, is_root, modules, &all_obj_types, &enums, &enum_names, &path_to_id)?;
+        let src = module::generate(
+            m,
+            is_root,
+            modules,
+            &all_obj_types,
+            &enums,
+            &enum_names,
+            &type_level_names,
+            &path_to_id,
+        )?;
         out.push((m.id.clone(), src));
     }
     Ok(out)

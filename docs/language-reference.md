@@ -6,8 +6,10 @@ A formal-ish description of the Arcis language as it stands in version 0.1.0.
 
 Arcis source files use the `.tsr` extension. A project is a directory
 containing exactly one `main.tsr` (entry point) plus zero or more other
-`.tsr` files (modules). Local modules are linked by `import`; external
-Rust crates by `import ... from "crate:<name>"`.
+`.tsr` files (modules). Modules support both ES/TS-style imports
+(`import { a } from "mod";`) and Python-style imports
+(`from mod import a;`) — see the [Modules](../README.md#modules) section
+in the README, and the grammar below.
 
 ## Grammar (EBNF-ish)
 
@@ -77,9 +79,15 @@ assign_stmt  = IDENT "=" expression ";"             -- plain assignment
 
 expr_stmt    = expression ";" ;
 
-import_stmt  = "import" ( IDENT ( "," "{" import_spec_list? "}" )?
-                       | "{" import_spec_list? "}" )
-                "from" STRING ";" ;
+import_stmt  = "import" module_path ( "as" IDENT )? ";"                        -- namespace import (Python style)
+             | "from" module_spec "import" ( "*" | import_name_list ) ";"      -- named import (Python style)
+             | "import" "{" import_name_list? "}" "from" module_spec ";"       -- named import (ES style)
+             | "import" IDENT ( "," "{" import_name_list? "}" )? "from" module_spec ";"  -- default (+named) import (ES style)
+             | "import" "*" "as" IDENT "from" module_spec ";" ;                -- namespace import (ES style)
+module_spec  = module_path | STRING ;               -- "utils", "./utils", "dir/utils", "crate:serde"
+module_path  = ( IDENT | "crate" ":" IDENT ) ( "." IDENT )* ;
+import_name_list = import_name ( "," import_name )* ;
+import_name  = ( IDENT | "default" ) ( "as" IDENT )? ;
 
 export_stmt  = "export" "default" ( "function" ... | expression ) ";"
              | "export" "{" export_spec_list? "}" ";"
@@ -151,11 +159,12 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | `sys.gpu.*`          | ✔ `list`/`name`/`vendor`/`memory`. Linux-first via `lspci` and `nvidia-smi`. |
 | `sys.disk.*`         | ✔ `list`/`free`/`used`/`total`. Cross-platform via `df`. |
 | `sys.net.*`          | ✔ `hostname`/`interfaces`/`ip`/`publicIp`/`online`. Linux-first via `hostname`, `ip`, `curl`, `ping`. |
-| Arrays + object literals | ✔ (with declared type) |
+| Arrays + object literals | ✔ — declared type optional, inferred from the literal when omitted |
+| Type inference       | ✔ `let x = 5;` → `number`, `let o = { a: 1 };` → inline object type, `for (let p of arr)` → element type, function return types inferred from `return` statements, inline arrow callback params/returns inferred from the receiver. Explicit annotations always win. Runs before codegen on BOTH backends and inside the LSP (hover shows inferred types). |
 | Array methods        | `find`, `filter`, `map`, `reduce`, `pop`, `push`, `unshift` |
 | String methods       | `toUpperCase`, `toLowerCase`, `trim`, `substring`, `indexOf`, `includes`, `charAt`, `.length` |
-| Modules              | `import`/`export` (TS-style)  |
-| External crates      | `import ... from "crate:<name>"` |
+| Modules              | ✔ ES/TS style (`import { a, b as c } from "mod"`, `import def from "mod"`, `import * as ns from "mod"`) AND Python style (`import mod as alias`, `from mod import a, b as c`, `from mod import default as d`, `from mod import *`); `export` is ES-style, including `export type`/`export interface`/`export enum` — all importable cross-module (both backends) |
+| External crates      | ✔ `from crate:<name> import X;` / `import { X } from "crate:<name>";` → `use <name>::X;` (Rust backend only; the crate must be visible to `rustc`/Cargo) |
 | Union types           | ✔ `A \| B` — erased to the first member's Rust type at codegen (see below) |
 | Intersection types     | ✔ `A & B` — same erasure as unions |
 | Literal types          | ✔ `"left" \| "right" \| "center"`, `-1 \| 0 \| 1`, `true \| false` |
@@ -169,11 +178,11 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | Non-null assertion (`!`) | ✔ postfix `!` — compile-time only, no runtime null check yet |
 | Function types          | ✔ `(a: T, b: U) => R` in type position (Rust backend only) |
 | Shadowing              | ✔ `let x` re-declared in a nested block — resolved by an alpha-renaming pre-pass before validation/codegen ever see it (both backends) |
-| Arrow functions         | ✔ `(x: number): number => x * 2`, block or expression body — **no variable capture**. Rust backend: lowers to a non-capturing closure. Cranelift backend: lambda-lifted into a synthetic top-level function (sound since there's no capture); a return type omitted from the source defaults to `number` (Cranelift has no `rustc`-style inference). Usable inline as `.map`/`.filter`/`.find`/`.reduce` callbacks on both backends |
+| Arrow functions         | ✔ `(x: number): number => x * 2`, block or expression body — **no variable capture**. Rust backend: lowers to a non-capturing closure. Cranelift backend: lambda-lifted into a synthetic top-level function (sound since there's no capture). Omitted return types and inline-callback parameter types are filled in by the inference pass on both backends. Usable inline as `.map`/`.filter`/`.find`/`.reduce` callbacks |
 | Spread (`...`)          | ✔ in array literals (`[...a, ...b]`) and object literals (`{ ...base, field: v }`) (both backends — Cranelift via new `arcis_vec_extend`/`arcis_object_merge` runtime calls) |
 | `switch`/`case`/`default` | ✔ **non-fallthrough** — each case is its own block, not a C-style fallthrough chain. Rust backend: `if`/`else if` chain (not a Rust `match`, since `number` is `f64` and Rust match patterns reject float literals). Cranelift backend: the same `==`-chain shape, built directly in Cranelift IR (both backends) |
 | `try`/`catch`/`throw`   | ✔ Rust backend: `std::panic::catch_unwind`/`panic!`. Cranelift backend: `setjmp`/`longjmp`, called *directly* from the generated IR (not through a C wrapper that returns — that shape is unsound, see the caveats below). Both backends leak the thrown value's frame locals on unwind (documented, not hidden) |
-| Enums                | ✔ `enum X { A, B = 5, C }` — numeric only. Rust backend: emits a `pub enum`, `X.A` → `X::A`. Cranelift backend: erases to a plain `f64const` (no enum type exists at the Cranelift IR level) (both backends) |
+| Enums                | ✔ `enum X { A, B = 5, C }` — TS *numeric enum* semantics on both backends: every variant IS a `number` (`X.B == 5` is true, a `number` field can hold it, printing shows the number). Rust backend: a unit struct with `f64` associated consts (`X::B`); Cranelift: compile-time `f64const`s. Enums declared in any module are usable from any other module. |
 | Array-method callbacks (`.find`/`.filter`/`.map`/`.reduce`) | ✔ Cranelift backend builds a real loop (blocks + `brif` + indirect-free direct calls) rather than splicing the callback inline the way the Rust backend does — this was a **pre-existing gap** (0% implemented) closed in the same pass as the six features above, not a new feature of its own |
 | Type checker         | — (relies on `rustc` today; annotations are not verified) |
 | Classes              | —                |
@@ -183,9 +192,9 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | Closures (capturing variables) | — (arrow functions above are non-capturing only) |
 | `bigint` literals (`100n`) | —          |
 | Async                | —                |
-| `import * as ns`     | —                |
-| Cranelift backend: unions/interfaces/aliases/`any` | — (still erase to an opaque `Object` handle or error; unrelated to the parity work above) |
-| Cranelift backend: `continue`/`break` inside an `if` nested in a `for-of` loop | — **known pre-existing bug**, confirmed to predate all of the above work (reproduces against the last committed revision with none of it applied): hangs instead of terminating. Not yet root-caused; tracked separately from the everyday-types/control-flow parity effort. |
+| Cranelift backend: interfaces / object shapes | ✔ interfaces and type aliases are resolved before codegen (same pass as the Rust backend); object field accesses (`p.name`, `arr[i].name`, for-of variables, nested `a.b.c`) are typed from the declared/inferred shape. `any` prefers the initializer's inferred type; unions erase to the first member. |
+| Cranelift backend: `continue`/`break` inside an `if` nested in a `for-of` loop | ✔ fixed — `continue` now routes through a dedicated increment block (it used to re-test the same element forever). |
+| Cranelift backend: printing `object`-typed values | ✔ promotes to `"[object Object]"` (JS-style) instead of erroring. |
 
 ## How types flow
 

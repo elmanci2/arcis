@@ -5,12 +5,12 @@ The Arcis standard library, shipped as `.tsr` source files (no Rust code).
 This crate is intentionally source-only. It exists so that every `arcis`
 distribution carries a coherent, versioned standard library. The
 `arcis-driver` crate wires it into the build pipeline by `include_str!`-ing
-the files at compile time, so `import { trim } from "std";` becomes a
+the files at compile time, so `from std import trim;` becomes a
 synthesised module.
 
 In phase 2 the driver learns to:
 
-1. Detect `from "std"` specifiers as references to this crate.
+1. Detect `std` module-path specifiers as references to this crate.
 2. Inject the corresponding `.tsr` source as a virtual module.
 3. Run the standard library through the normal pipeline along with the
    user's program.

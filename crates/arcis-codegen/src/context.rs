@@ -29,4 +29,8 @@ pub(crate) struct Ctx<'a> {
     /// `emit_member` to tell `Color.Red` (an enum variant, -> `Color::Red`)
     /// apart from `person.name` (a field access).
     pub enum_names: &'a HashSet<String>,
+    /// Local names bound by namespace imports (`import utils;` /
+    /// `import utils as u;` / `import * as u from "utils";`). Used by
+    /// `emit_member` to emit `u::item` instead of `u.item`.
+    pub namespace_names: &'a HashSet<String>,
 }

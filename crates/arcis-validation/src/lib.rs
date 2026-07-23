@@ -30,11 +30,13 @@
 use arcis_ast::Program;
 
 mod duplicate;
+pub mod infer;
 mod loop_ctx;
 mod shadowing;
 mod unused;
 
 pub use duplicate::DuplicateDecl;
+pub use infer::{expr_type, infer_program, TypeEnv};
 pub use shadowing::resolve_shadowing;
 pub use unused::UnusedDecl;
 
@@ -46,7 +48,7 @@ pub enum DeclKind {
 }
 
 impl DeclKind {
-    pub(crate) fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             DeclKind::Variable => "variable",
             DeclKind::Parameter => "parameter",

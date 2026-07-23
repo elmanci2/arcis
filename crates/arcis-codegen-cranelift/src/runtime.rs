@@ -800,10 +800,43 @@ ArcisString* arcis_proc_executable_path(void) {
 double arcis_process_current_pid(void) { return (double)getpid(); }
 double arcis_process_parent_pid(void) { return (double)getppid(); }
 
+// Compose `cmd 'arg1' 'arg2' ...` into `out`. Each argument is wrapped in
+// single quotes (with embedded quotes escaped as '\'') so shell
+// metacharacters in arguments are passed through literally.
+static void arcis_build_cmdline(ArcisString* cmd, ArcisVec* args_v, char* out, size_t out_size) {
+    size_t pos = 0;
+    out[0] = '\0';
+    if (cmd == NULL || cmd->len == 0) return;
+    int n = snprintf(out + pos, out_size - pos, "%.*s", (int)cmd->len, cmd->ptr);
+    if (n < 0) return;
+    pos += (size_t)n;
+    if (args_v == NULL) return;
+    for (int32_t i = 0; i < arcis_vec_len(args_v); i++) {
+        ArcisString* a = (ArcisString*)(uintptr_t)arcis_vec_get(args_v, i);
+        if (a == NULL) continue;
+        if (pos + 4 >= out_size) break;
+        out[pos++] = ' ';
+        out[pos++] = '\'';
+        for (uint64_t j = 0; j < a->len && pos + 6 < out_size; j++) {
+            char ch = a->ptr[j];
+            if (ch == '\'') {
+                memcpy(out + pos, "'\\''", 4);
+                pos += 4;
+            } else {
+                out[pos++] = ch;
+            }
+        }
+        if (pos < out_size) out[pos++] = '\'';
+        out[pos] = '\0';
+    }
+    out[pos < out_size ? pos : out_size - 1] = '\0';
+}
+
 ArcisString* arcis_process_exec(ArcisString* cmd, ArcisVec* args_v) {
-    // Build argv, run cmd, capture stdout, return as string.
+    // Build the command line (cmd + quoted args), run it, capture stdout.
     if (cmd == NULL || cmd->len == 0) return arcis_string_alloc_internal(NULL, 0);
-    char c[4096]; snprintf(c, sizeof(c), "%.*s", (int)cmd->len, cmd->ptr);
+    char c[8192];
+    arcis_build_cmdline(cmd, args_v, c, sizeof(c));
     FILE* p = popen(c, "r");
     if (p == NULL) return arcis_string_alloc_internal(NULL, 0);
     ArcisString* out = arcis_string_alloc_internal(NULL, 0);
@@ -823,9 +856,58 @@ ArcisString* arcis_process_run(ArcisString* cmd) {
     return arcis_process_exec(cmd, NULL);
 }
 
-double arcis_process_spawn(ArcisString* cmd) {
+// `sys.process(cmd)` — run a command capturing stdout, stderr and the exit
+// code, returned as an object `{ stdout, stderr, exitCode }` (mirroring the
+// Rust backend's `ArcisProcess` struct). Numbers are stored as the f64 bit
+// pattern in the object's i64 slot, matching the codegen's value ABI.
+ArcisObject* arcis_process_run_obj(ArcisString* cmd, ArcisVec* args_v) {
+    ArcisObject* o = arcis_object_new();
+    ArcisString* out_s = arcis_string_alloc_internal(NULL, 0);
+    ArcisString* err_s = arcis_string_alloc_internal(NULL, 0);
+    double code = -1.0;
+    if (cmd != NULL && cmd->len > 0) {
+        char out_path[] = "/tmp/arcis_out_XXXXXX";
+        char err_path[] = "/tmp/arcis_err_XXXXXX";
+        int fo = mkstemp(out_path);
+        int fe = mkstemp(err_path);
+        if (fo >= 0 && fe >= 0) {
+            close(fo); close(fe);
+            char line[8192];
+            arcis_build_cmdline(cmd, args_v, line, sizeof(line));
+            char full[8704];
+            snprintf(full, sizeof(full), "( %s ) > %s 2> %s",
+                     line, out_path, err_path);
+            int status = system(full);
+            if (status != -1) {
+                code = (double)WEXITSTATUS(status);
+            }
+            arcis_string_drop(out_s);
+            arcis_string_drop(err_s);
+            ArcisString* out_p = arcis_string_from_cstr(out_path);
+            ArcisString* err_p = arcis_string_from_cstr(err_path);
+            out_s = arcis_fs_read_file(out_p);
+            err_s = arcis_fs_read_file(err_p);
+            arcis_string_drop(out_p);
+            arcis_string_drop(err_p);
+            unlink(out_path);
+            unlink(err_path);
+        } else {
+            if (fo >= 0) { close(fo); unlink(out_path); }
+            if (fe >= 0) { close(fe); unlink(err_path); }
+        }
+    }
+    int64_t code_bits;
+    memcpy(&code_bits, &code, sizeof(code_bits));
+    arcis_object_set(o, arcis_string_from_cstr("stdout"), (int64_t)(uintptr_t)out_s);
+    arcis_object_set(o, arcis_string_from_cstr("stderr"), (int64_t)(uintptr_t)err_s);
+    arcis_object_set(o, arcis_string_from_cstr("exitCode"), code_bits);
+    return o;
+}
+
+double arcis_process_spawn(ArcisString* cmd, ArcisVec* args_v) {
     if (cmd == NULL || cmd->len == 0) return -1.0;
-    char c[4096]; snprintf(c, sizeof(c), "%.*s", (int)cmd->len, cmd->ptr);
+    char c[8192];
+    arcis_build_cmdline(cmd, args_v, c, sizeof(c));
     pid_t pid = fork();
     if (pid == 0) { execl("/bin/sh", "sh", "-c", c, (char*)NULL); _exit(127); }
     return (double)pid;

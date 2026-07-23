@@ -1,8 +1,9 @@
 # Arcis
 
 A minimal **TypeScript-like** language (`.tsr`) written in Rust that compiles to
-**native binaries** by transpiling to Rust and delegating the final step to
-`rustc` (or `cargo`, when external crates are involved).
+**native binaries** — by default through a Cranelift code generator (no Rust
+toolchain needed at runtime), or alternatively by transpiling to Rust and
+delegating the final step to `rustc`/`cargo` (`--backend rust`).
 
 The syntax is identical to TypeScript — same keywords, same `let`/`const`,
 same `function` declarations. The difference is that `.tsr` files do not run
@@ -71,14 +72,15 @@ To update after changes: `cargo install --path . --force`.
 ## Backends
 
 `arcis` ships with **two** compiler backends, selectable per command via the
-`--backend` flag. The default is the original Rust backend; passing
-`--backend cranelift` switches to a Cranelift-based native code generator
-that does **not** depend on a Rust toolchain at runtime.
+`--backend` flag. The default is the Cranelift native code generator, which
+does **not** depend on a Rust toolchain at runtime; passing `--backend rust`
+switches to the original Rust-source backend (the most feature-complete one —
+prefer it if you hit a Cranelift limitation).
 
 | Backend    | Toolchain needed at runtime                | Library dependencies at runtime          | Default |
 |------------|--------------------------------------------|-----------------------------------------|---------|
-| `rust`     | `rustc` / `cargo`                          | Rust `std`                              | ✓       |
-| `cranelift`| only `cc` (gcc, clang, …)                  | libc                                    |         |
+| `cranelift`| only `cc` (gcc, clang, …)                  | libc                                    | ✓       |
+| `rust`     | `rustc` / `cargo`                          | Rust `std`                              |         |
 
 ```bash
 arcis build --backend rust      examples/01-hello/hello.tsr
@@ -105,6 +107,11 @@ backend yet.
 
 ## Supported subset
 
+- **Type inference**: annotations are optional wherever the type can be
+  deduced — `let x = 5;`, `let o = { a: 1 };`, `for (let p of people)`,
+  function return types (`function dbl(n: number) { return n * 2; }` infers
+  `number`), inline arrow callbacks (`arr.map(x => x * 2)`). Explicit
+  annotations always win.
 - `let` / `const` with optional type annotation
 - Primitive types: `string`, `number`, `boolean`, `void`
 - `function name(p: T, ...): T { ... }` with `return`
@@ -119,7 +126,7 @@ backend yet.
 - Reassignment (`x = ...`), indexed assignment (`arr[i] = ...`), field assignment (`obj.x = ...`)
 - Operators: `+ - * / % == != < > <= >= && || !`
 - Comments `//` and `/* ... */`
-- **Modules**: `import`/`export` with TypeScript syntax (see [Modules](#modules))
+- **Modules**: ES/TS-style `import { a } from "mod"` AND Python-style `from mod import a` — both work; ES-style `export`, including `export interface/type/enum` (see [Modules](#modules))
 
 ## Example
 
@@ -181,22 +188,34 @@ arcis run examples/<folder>/<file>.tsr
 ## Modules
 
 By convention the entry point is **`main.tsr`**. Without arguments, `arcis run`
-uses `./main.tsr`; passing a directory searches `<dir>/main.tsr`. Standard
-TypeScript syntax for `import`/`export` is supported:
+uses `./main.tsr`; passing a directory searches `<dir>/main.tsr`. Imports come
+in **both** ES/TS style and Python style (mix freely); exports are ES-style:
 
 ```ts
 // utils.tsr
 export const PI: number = 3.14;
 export function add(a: number, b: number): number { return a + b; }
+export interface Point { x: number; y: number; }  // types are exportable too
+export type Id = string | number;
+export enum Color { Red, Green, Blue }
 export default function compute(n: number): number { return n * PI; }
 ```
 
 ```ts
-// main.tsr (entry point)
+// main.tsr (entry point) — ES/TS style
 import { add, PI } from "utils";                  // named imports
-import { add as a } from "utils";                 // with alias
+import { add as a, Point, Color } from "utils";   // aliases; types/enums import too
 import compute from "utils";                      // default import
 import compute, { PI } from "utils";              // default + named
+import * as u from "utils";                       // namespace import
+
+// Python style (equivalent, still supported)
+import utils;                                     // namespace import
+import utils as u;                                // namespace import with alias
+from utils import add, PI;                        // named imports
+from utils import default as compute;             // default import
+from utils import *;                              // wildcard import
+
 export function f() { ... }                       // inline export
 export const X = 1;                               // export const (const value)
 export { f, X as Y };                             // re-export (with alias)
@@ -204,7 +223,10 @@ export default function () { ... }                // default export
 ```
 
 Import paths are resolved relative to the directory of the importing file
-(without the `./` prefix): `from "utils"` resolves to `<dir>/utils.tsr`.
+(without the `./` prefix): `from "utils"` / `from utils import ...` resolves
+to `<dir>/utils.tsr`. External Rust crates use a `crate:` prefix
+(`import { to_json } from "crate:serde";` / `from crate:serde import to_json;`
+— Rust backend only).
 Internally each `.tsr` is transpiled to a separate `.rs`, and `main.rs` declares
 them with `mod <id>;`, referencing items via `use crate::<id>::...;`. This
 translates to real Rust modules (`pub fn`, `pub const`, `pub use self::...`),
@@ -220,7 +242,7 @@ Full example: `examples/mods/`.
   `export const X = function() {...}` with non-const-eval functions, rustc
   will fail with a clear error.
 - **Module names**: must be valid Rust identifiers (the file stem:
-  `[A-Za-z_][A-Za-z0-9_]*`). `from "my-mod"` will fail with a link error.
+  `[A-Za-z_][A-Za-z0-9_]*`). `from my-mod import x;` will fail with a link error.
 - **Object types** (`{ a: T, ... }`) are centralized in `main.rs` as
   `pub struct`, and non-`main` modules reference them as
   `crate::__ObjNAME`. This avoids duplication between modules.
@@ -228,7 +250,9 @@ Full example: `examples/mods/`.
   (Rust requires the original item to be public). To preserve encapsulation
   in this case a wrapper would have to be emitted; for now the original item
   must be public.
-- `import * as ns` (namespace) is **not** supported in this step.
+- **External Rust crates** (`from crate:<name> import X;` /
+  `import { X } from "crate:<name>";`) parse and emit `use <name>::X;` —
+  Rust backend only, and the crate must be available to `rustc`/Cargo.
 
 ## Out of scope (for now)
 
@@ -236,7 +260,6 @@ Full example: `examples/mods/`.
 - Closures that capture variables (arrow functions are supported, but
   non-capturing only), destructuring, template literals
 - `bigint` literals
-- `import * as ns` (namespace import)
 - Async / await
 
 ## How it works
@@ -312,18 +335,13 @@ graph and pipeline diagram.
   the Rust backend's `AssertUnwindSafe` approach, a thrown value leaks the
   memory of any unwound frame's heap allocations (acceptable for now since
   exceptions are not meant to be a hot-loop pattern).
-- Cranelift backend, pre-existing bug: `continue`/`break` inside an `if`
-  nested in a `for-of` loop hangs instead of terminating. Confirmed to
-  predate all of the feature work above (reproduces on a clean checkout);
-  not yet root-caused.
-- Cranelift backend: string-promotion of `object`/`any`-typed values
-  (e.g. printing an object or a union-typed value that erases to `any`)
-  is not implemented — `examples/types/types.tsr` fails there with
-  "cannot promote object to string" (the Rust backend handles this via
-  `Debug`/`Display` derives).
-- Unions, interfaces/type aliases, and `any` erase to an opaque handle the
-  same way in both backends; nothing full-blown like a real tagged-union
-  runtime representation exists yet.
+- Both backends run the same pre-codegen pipeline: interface/alias/enum
+  resolution, then type inference. `continue`/`break` inside `for-of`
+  loops, object/interface field access (including nested and cross-module),
+  and printing `object`-typed values (`"[object Object]"`, JS-style) all
+  work on Cranelift.
+- Unions erase to their first member; nothing full-blown like a real
+  tagged-union runtime representation exists yet.
 
 ## Next steps (ideas)
 

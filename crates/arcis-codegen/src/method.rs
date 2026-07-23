@@ -25,37 +25,40 @@ pub(crate) fn emit(
 ) -> bool {
     // Rust method detail:
     //   Vec<T>::iter() → Iterator<Item = &T>
-    //   .find(cb)   expects Fn(&&T) → bool     pattern |&&x|  → x: &T
-    //   .filter(cb) expects Fn(&&T) → bool     pattern |&&x|  → x: &T
-    //   .map(cb)    expects FnMut(T) → U       pattern |&x|   → x: T
-    //   .fold(init, cb) expects FnMut(B, T) → B  pattern |acc, &x|  → x: T
-    // User-defined functions take T by value, so we do NOT dereference when
-    // passing `x` as an argument.
+    //   .find(cb)   expects Fn(&&T) → bool     pattern |x|  → x: &&T
+    //   .filter(cb) expects Fn(&&T) → bool     pattern |x|  → x: &&T
+    //   .map(cb)    expects FnMut(&T) → U      pattern |x|  → x: &T
+    //   .fold(init, cb) expects FnMut(B, &T) → B  pattern |acc, x|  → x: &T
+    // User-defined callbacks take T by value, so the element is passed as
+    // `(*…x).clone()` — an explicit deref to the `T` place, then `clone()`.
+    // This works for every element type (`f64`, `String`, structs, …); the
+    // old `|&x|` destructuring patterns required `T: Copy` and rejected
+    // `string[]` / interface-typed arrays (E0507).
     match property {
         // ── Array methods ──────────────────────────────────────────────
         "find" => {
             crate::expr::emit(out, object, ctx);
-            out.push_str(".iter().find(|&&x| ");
+            out.push_str(".iter().find(|x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x", ctx);
+                crate::builtin::emit_callback_call(out, cb, "(**x).clone()", ctx);
             }
             out.push_str(").cloned().unwrap_or_default()");
             true
         }
         "filter" => {
             crate::expr::emit(out, object, ctx);
-            out.push_str(".iter().filter(|&&x| ");
+            out.push_str(".iter().filter(|x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x", ctx);
+                crate::builtin::emit_callback_call(out, cb, "(**x).clone()", ctx);
             }
             out.push_str(").cloned().collect()");
             true
         }
         "map" => {
             crate::expr::emit(out, object, ctx);
-            out.push_str(".iter().map(|&x| ");
+            out.push_str(".iter().map(|x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x", ctx);
+                crate::builtin::emit_callback_call(out, cb, "(*x).clone()", ctx);
             }
             out.push_str(").collect()");
             true
@@ -66,9 +69,9 @@ pub(crate) fn emit(
             if let Some(init) = args.get(1) {
                 crate::expr::emit(out, init, ctx);
             }
-            out.push_str(", |acc, &x| ");
+            out.push_str(", |acc, x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call2(out, cb, "acc", "x", ctx);
+                crate::builtin::emit_callback_call2(out, cb, "acc", "(*x).clone()", ctx);
             }
             out.push(')');
             true

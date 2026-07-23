@@ -41,7 +41,7 @@ pub(crate) struct Runtime {
 
     // Phase 5: sys.* — process management.
     pub process_current_pid: FuncId, pub process_parent_pid: FuncId,
-    pub process_exec: FuncId, pub process_run: FuncId,
+    pub process_exec: FuncId, pub process_run: FuncId, pub process_run_obj: FuncId,
     pub process_spawn: FuncId, pub process_kill: FuncId, pub process_list: FuncId,
 
     // Phase 5: sys.* — env vars.
@@ -164,7 +164,8 @@ impl Runtime {
             process_parent_pid:   d!("arcis_process_parent_pid", &[], &[F64]),
             process_exec:         d!("arcis_process_exec", &[I64, I64], &[I64]),
             process_run:          d!("arcis_process_run", &[I64], &[I64]),
-            process_spawn:        d!("arcis_process_spawn", &[I64], &[F64]),
+            process_run_obj:      d!("arcis_process_run_obj", &[I64, I64], &[I64]),
+            process_spawn:        d!("arcis_process_spawn", &[I64, I64], &[F64]),
             process_kill:         d!("arcis_process_kill", &[F64], &[]),
             process_list:         d!("arcis_process_list", &[], &[I64]),
 

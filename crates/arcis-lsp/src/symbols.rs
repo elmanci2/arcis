@@ -106,6 +106,51 @@ pub fn collect_symbols(program: &Program) -> Vec<Symbol> {
     out
 }
 
+/// Lex + parse + run type inference over `text`. The returned program has
+/// missing annotations (let/const types, for-of element types, function
+/// return types) filled in wherever they can be deduced, so symbol details
+/// show `let x: number` instead of `let x: any` for unannotated bindings.
+/// `None` when the document doesn't currently lex/parse.
+pub fn parse_and_infer(text: &str) -> Option<Program> {
+    let tokens = arcis_lexer::lex(text).ok()?;
+    let mut program = arcis_parser::parse(tokens).ok()?;
+    infer(&mut program);
+    Some(program)
+}
+
+/// Like [`parse_and_infer`], but tolerant of a document that is mid-edit:
+/// when the parse fails, the offending line is blanked out and the parse
+/// retried (up to three times). Completion/hover keep working on the rest
+/// of the file while one line is momentarily invalid.
+pub fn parse_lenient(text: &str) -> Option<Program> {
+    let mut owned = text.to_string();
+    for _ in 0..4 {
+        let tokens = arcis_lexer::lex(&owned).ok()?;
+        match arcis_parser::parse(tokens) {
+            Ok(mut program) => {
+                infer(&mut program);
+                return Some(program);
+            }
+            Err(e) => {
+                let mut lines: Vec<&str> = owned.lines().collect();
+                let idx = e.line.saturating_sub(1);
+                if idx >= lines.len() || lines[idx].is_empty() {
+                    return None;
+                }
+                lines[idx] = "";
+                owned = lines.join("\n");
+            }
+        }
+    }
+    None
+}
+
+fn infer(program: &mut Program) {
+    let mut env = arcis_validation::TypeEnv::default();
+    env.add_program(program);
+    arcis_validation::infer_program(program, &env);
+}
+
 fn push(out: &mut Vec<Symbol>, name: String, kind: SymbolKind, line: usize, col: usize, detail: String) {
     push_ex(out, name, kind, line, col, detail, false);
 }

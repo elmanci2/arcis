@@ -115,6 +115,7 @@ fn emit_let(
         current_return_type: None,
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
+        namespace_names: ctx.namespace_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -155,6 +156,7 @@ fn emit_const(
         current_return_type: None,
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
+        namespace_names: ctx.namespace_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -222,6 +224,7 @@ fn emit_return(
             current_return_type: None,
             is_root: ctx.is_root,
             enum_names: ctx.enum_names,
+            namespace_names: ctx.namespace_names,
         };
         crate::expr::emit(out, e, &nested);
     }

@@ -25,6 +25,7 @@ pub(crate) fn generate(
     all_obj_types: &[Type],
     enums: &[(String, Vec<(String, Option<i64>)>)],
     enum_names: &HashSet<String>,
+    type_level_names: &HashSet<String>,
     path_to_id: &HashMap<std::path::PathBuf, String>,
 ) -> Result<String, String> {
     let mut out = String::new();
@@ -32,6 +33,24 @@ pub(crate) fn generate(
 
     let reassigned = crate::collect::collect_reassigned(&m.program);
     let types = crate::collect::collect_types(&m.program);
+    // Local names bound by namespace imports (`import utils;` /
+    // `import utils as u;`) — member access on them (`u.item`) must emit
+    // a Rust path (`u::item`), not a field access.
+    let mut namespace_names: HashSet<String> = HashSet::new();
+    for stmt in &m.program.stmts {
+        if let Stmt::Import { module, alias } = stmt {
+            if module.first().map(|s| s.as_str()) == Some("sys") {
+                continue;
+            }
+            let local = alias
+                .clone()
+                .or_else(|| module.last().cloned())
+                .unwrap_or_default();
+            if !local.is_empty() {
+                namespace_names.insert(local);
+            }
+        }
+    }
     let ctx = Ctx {
         reassigned: &reassigned,
         types: &types,
@@ -39,6 +58,7 @@ pub(crate) fn generate(
         current_return_type: None,
         is_root,
         enum_names,
+        namespace_names: &namespace_names,
     };
 
     // The root declares every sub-module and defines the object-type
@@ -57,16 +77,38 @@ pub(crate) fn generate(
     }
 
     // imports → `use crate::<id>::...`
-    emit_imports(&mut out, &m.program, &m.path, modules, path_to_id)?;
+    emit_imports(
+        &mut out,
+        &m.program,
+        &m.path,
+        is_root,
+        modules,
+        type_level_names,
+        path_to_id,
+    )?;
 
     // Object-type references in this module → `use crate::__Obj...;`
     // (necessary in non-root modules because the structs live in the root).
+    // Enums are also defined in the root, so every non-root module gets a
+    // `use crate::EnumName;` bridge (harmless if unused — the preamble
+    // allows unused_imports).
     if !is_root {
         let mut seen: HashSet<String> = HashSet::new();
         for stmt in &m.program.stmts {
             crate::collect::collect_object_type_names(stmt, &mut seen);
         }
+        // Bridge every centrally-defined struct and enum, not just the ones
+        // the (partial) collect walk found — return types, for-of
+        // annotations, etc. also reference them.
+        for ty in all_obj_types {
+            if let Some(name) = ty.struct_name() {
+                seen.insert(name.to_string());
+            }
+        }
         for name in seen {
+            out.push_str(&format!("use crate::{};\n", name));
+        }
+        for (name, _) in enums {
             out.push_str(&format!("use crate::{};\n", name));
         }
     }
@@ -99,11 +141,19 @@ pub(crate) fn generate(
 }
 
 /// Emit Rust `use` statements for all import declarations.
+///
+/// Type-level names (interfaces / type aliases / enums) are NOT emitted as
+/// `use crate::<mod>::name` — interfaces and enums are defined centrally in
+/// the root (and bridged into every non-root module by [`generate`]), and
+/// aliases are fully erased before codegen. Importing them is valid at the
+/// Arcis level but needs no Rust `use`.
 fn emit_imports(
     out: &mut String,
     program: &Program,
     importer_path: &std::path::Path,
+    is_root: bool,
     modules: &[Module],
+    type_level_names: &HashSet<String>,
     path_to_id: &HashMap<std::path::PathBuf, String>,
 ) -> Result<(), String> {
     for stmt in &program.stmts {
@@ -132,10 +182,15 @@ fn emit_imports(
                             )
                         })?;
                         let local = alias.clone().unwrap_or_else(|| dep_id.clone());
-                        out.push_str(&format!(
-                            "use crate::{} as {};\n",
-                            dep_id, local
-                        ));
+                        // In the root, `mod <dep_id>;` already brings the
+                        // unaliased name into scope — a self-referential
+                        // `use crate::X as X;` would be an E0255 duplicate.
+                        if !(is_root && local == *dep_id) {
+                            out.push_str(&format!(
+                                "use crate::{} as {};\n",
+                                dep_id, local
+                            ));
+                        }
                     }
                 }
             }
@@ -184,6 +239,30 @@ fn emit_imports(
                             for n in names {
                                 let local =
                                     n.alias.clone().unwrap_or_else(|| n.name.clone());
+                                // Default import: resolve to the target
+                                // module's real default-export symbol.
+                                if n.name == "default" {
+                                    let real = modules
+                                        .iter()
+                                        .find(|m| m.path == dep_path)
+                                        .and_then(|m| m.exports.default.clone())
+                                        .ok_or_else(|| {
+                                            format!(
+                                                "`{}` has no default export",
+                                                module.join(".")
+                                            )
+                                        })?;
+                                    out.push_str(&format!(
+                                        "use crate::{}::{} as {};\n",
+                                        dep_id, real, local
+                                    ));
+                                    continue;
+                                }
+                                // Interfaces / aliases / enums: no Rust
+                                // `use` needed (see doc comment above).
+                                if type_level_names.contains(&n.name) {
+                                    continue;
+                                }
                                 if local == n.name {
                                     out.push_str(&format!(
                                         "use crate::{}::{};\n",
@@ -279,6 +358,7 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
         current_return_type: None,
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
+        namespace_names: ctx.namespace_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n\n");

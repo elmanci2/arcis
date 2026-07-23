@@ -221,3 +221,68 @@ fn operator_precedence_is_respected() {
         _ => panic!("expected Stmt::Let"),
     }
 }
+
+// ── ES-style imports ─────────────────────────────────────────────────────
+
+#[test]
+fn parses_es_named_import() {
+    let tokens = arcis_lexer::lex("import { a, b as c } from \"utils\";").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::FromImport { module, names, wildcard } => {
+            assert_eq!(module, &vec!["utils".to_string()]);
+            assert!(!wildcard);
+            assert_eq!(names.len(), 2);
+            assert_eq!(names[0].name, "a");
+            assert_eq!(names[1].name, "b");
+            assert_eq!(names[1].alias.as_deref(), Some("c"));
+        }
+        other => panic!("expected FromImport, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_es_default_import() {
+    let tokens = arcis_lexer::lex("import compute from \"utils\";").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::FromImport { names, .. } => {
+            assert_eq!(names[0].name, "default");
+            assert_eq!(names[0].alias.as_deref(), Some("compute"));
+        }
+        other => panic!("expected FromImport, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_es_namespace_import() {
+    let tokens = arcis_lexer::lex("import * as u from \"utils\";").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::Import { module, alias } => {
+            assert_eq!(module, &vec!["utils".to_string()]);
+            assert_eq!(alias.as_deref(), Some("u"));
+        }
+        other => panic!("expected Import, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_python_style_import_still() {
+    let tokens = arcis_lexer::lex("import utils as u;\nfrom utils import a, b as c;\n").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    assert!(matches!(&program.stmts[0], arcis_ast::Stmt::Import { .. }));
+    assert!(matches!(&program.stmts[1], arcis_ast::Stmt::FromImport { .. }));
+}
+
+#[test]
+fn parses_crate_specifier() {
+    let tokens = arcis_lexer::lex("from crate:serde import to_json;").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::FromImport { module, .. } => {
+            assert_eq!(module[0], "crate:serde");
+        }
+        other => panic!("expected FromImport, got {:?}", other),
+    }
+}

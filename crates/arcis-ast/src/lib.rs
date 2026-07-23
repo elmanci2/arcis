@@ -461,3 +461,21 @@ impl Type {
         }
     }
 }
+
+/// Generate a deterministic identifier for an inline object type, based on
+/// the hash of its field shape (name, type, optional-ness). Same shape →
+/// same name → same struct. Shared by the parser (annotation-derived object
+/// types) and the type-inference pass (object-literal-derived types), so an
+/// inferred literal and an identical annotation dedupe to one struct.
+pub fn object_type_name(fields: &[(String, Box<Type>, bool)]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut h = DefaultHasher::new();
+    for (k, t, opt) in fields {
+        k.hash(&mut h);
+        t.primitive_name().hash(&mut h);
+        opt.hash(&mut h);
+    }
+    format!("__Obj{:x}", h.finish() & 0xFFFFFF)
+}

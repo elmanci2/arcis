@@ -5,14 +5,12 @@
 //!
 //! 1. `arcis_lexer::lex` — surfaces lexical errors.
 //! 2. `arcis_parser::parse` — surfaces syntax errors.
-//!
-//! Validation (unused / duplicate) is left out for now: the current
-//! `arcis-validation` crate reports issues without per-symbol line
-//! info compatible with LSP `Range`. Wiring it in cleanly is a
-//! follow-up that depends on the validator's structured output
-//! stabilising.
+//! 3. `arcis_validation::validate` — unused variables (warning),
+//!    duplicate declarations and `break`/`continue` outside a loop
+//!    (errors), each anchored at its declaration's line/col.
 
 use arcis_parser::ParseError;
+use arcis_validation::ValidationIssue;
 use crate::lsp::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 /// Run the diagnostic pipeline against `text` and return every
@@ -34,9 +32,62 @@ pub fn diagnostics_for(text: &str) -> Vec<Diagnostic> {
     };
 
     // 2. Parse
-    match arcis_parser::parse(tokens) {
-        Ok(_program) => vec![],
-        Err(e) => vec![from_parse(e)],
+    let program = match arcis_parser::parse(tokens) {
+        Ok(program) => program,
+        Err(e) => return vec![from_parse(e)],
+    };
+
+    // 3. Validate
+    arcis_validation::validate(&program)
+        .into_iter()
+        .map(from_validation)
+        .collect()
+}
+
+fn from_validation(issue: ValidationIssue) -> Diagnostic {
+    let (message, severity, line, col, len) = match &issue {
+        ValidationIssue::Unused(u) => (
+            format!("unused {} `{}`", u.kind.label(), u.name),
+            DiagnosticSeverity::WARNING,
+            u.line,
+            u.col,
+            u.name.chars().count(),
+        ),
+        ValidationIssue::Duplicate(d) => (
+            format!(
+                "duplicate {} `{}` (first declared at {}:{})",
+                d.kind.label(),
+                d.name,
+                d.first_line,
+                d.first_col
+            ),
+            DiagnosticSeverity::ERROR,
+            d.second_line,
+            d.second_col,
+            d.name.chars().count(),
+        ),
+        ValidationIssue::BreakOutsideLoop { keyword, line, col } => (
+            format!("`{}` outside of a loop", keyword),
+            DiagnosticSeverity::ERROR,
+            *line,
+            *col,
+            keyword.chars().count(),
+        ),
+    };
+    let line = line.saturating_sub(1) as u32;
+    let character = col.saturating_sub(1) as u32;
+    Diagnostic {
+        range: Range {
+            start: Position { line, character },
+            end: Position {
+                line,
+                character: character.saturating_add(len.max(1) as u32),
+            },
+        },
+        severity: Some(severity),
+        source: Some("arcis-lsp".into()),
+        message,
+        ..Default::default()
     }
 }
 

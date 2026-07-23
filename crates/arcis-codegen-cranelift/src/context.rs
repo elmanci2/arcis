@@ -26,6 +26,9 @@ use crate::types::ArcisType;
 pub(crate) struct FnInfo {
     pub id: cranelift_module::FuncId,
     pub params: Vec<ArcisType>,
+    /// Declared Arcis return type — the machine signature alone can't
+    /// distinguish `string` / `array` / `object` (all `I64` handles).
+    pub ret: ArcisType,
 }
 
 /// Stack frame for one enclosing loop. Used by `stmt::emit` to dispatch
@@ -85,6 +88,18 @@ pub(crate) struct FunctionCtx {
     /// call `arcis_try_end()` the right number of times before an early
     /// exit, keeping the C runtime's `arcis_try_depth` balanced.
     pub(crate) open_try_count: u32,
+    /// Module-level constants visible to this function: the module's own
+    /// top-level `let`/`const` initializers (non-root modules) plus every
+    /// imported constant (`from mate import PI`). An identifier that isn't
+    /// a local binding re-emits the initializer expression in place —
+    /// Cranelift modules have no linkable data symbols for consts yet.
+    pub(crate) global_consts: HashMap<String, arcis_ast::Expr>,
+    /// Program-wide fallback: field name → ArcisType, collected from every
+    /// object type / interface in every module. Used to type a field access
+    /// whose receiver has no per-variable tracked shape (nested members,
+    /// call results). Last-write-wins on cross-interface collisions — only
+    /// consulted when the alternative is a silent f64 reinterpretation.
+    pub(crate) global_field_types: HashMap<String, ArcisType>,
 }
 
 impl FunctionCtx {
@@ -104,6 +119,8 @@ impl FunctionCtx {
             var_counter: 0,
             arrow_counter: 0,
             open_try_count: 0,
+            global_consts: HashMap::new(),
+            global_field_types: HashMap::new(),
         }
     }
 
@@ -180,7 +197,25 @@ impl FunctionCtx {
 
     /// Look up the ArcisType of an object's field.
     pub(crate) fn object_field_ty(&self, obj_name: &str, field_name: &str) -> Option<ArcisType> {
-        self.object_field_types.get(obj_name)?.get(field_name).copied()
+        let r = self.object_field_types.get(obj_name).and_then(|m| m.get(field_name).copied());
+        if std::env::var("ARCIS_DEBUG_SHAPES").is_ok() {
+            eprintln!("[shape] lookup {}.{} -> {:?} (known: {:?})", obj_name, field_name, r, self.object_field_types.keys().collect::<Vec<_>>());
+        }
+        r
+    }
+
+    /// The initializer expression of a module-level or imported constant.
+    pub(crate) fn global_const(&self, name: &str) -> Option<&arcis_ast::Expr> {
+        self.global_consts.get(name)
+    }
+
+    /// Copy the tracked field-type map of `src` onto `dst`. Used to give a
+    /// `for (x of arr)` loop variable (or any derived binding) the same
+    /// object shape as its source array binding.
+    pub(crate) fn copy_object_fields(&mut self, src: &str, dst: &str) {
+        if let Some(map) = self.object_field_types.get(src).cloned() {
+            self.object_field_types.insert(dst.to_string(), map);
+        }
     }
 
     pub fn rebind(&mut self, name: &str, value: Value, builder: &mut cranelift_frontend::FunctionBuilder<'_>) {

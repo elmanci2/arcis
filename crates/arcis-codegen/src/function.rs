@@ -37,6 +37,7 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
         current_return_type: Some(&f.return_type),
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
+        namespace_names: ctx.namespace_names,
     };
     for stmt in &f.body {
         crate::stmt::emit(out, stmt, 1, &body_ctx);

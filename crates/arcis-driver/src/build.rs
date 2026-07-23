@@ -39,6 +39,21 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
         }
     }
 
+    // Resolve interfaces / type aliases / enum names in type position, then
+    // run type inference to fill in missing annotations (let/const types,
+    // for-of element types, function return types). Both backends receive
+    // the same fully-annotated ASTs.
+    let mut modules = arcis_codegen::resolve_program_types(&modules);
+    {
+        let mut env = arcis_validation::TypeEnv::default();
+        for m in &modules {
+            env.add_program(&m.program);
+        }
+        for m in &mut modules {
+            arcis_validation::infer_program(&mut m.program, &env);
+        }
+    }
+
     let bin_dir = PathBuf::from("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("could not create `bin/`: {}", e))?;
     let root_id = modules[0].id.clone();

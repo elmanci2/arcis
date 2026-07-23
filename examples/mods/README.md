@@ -2,13 +2,15 @@
 
 A minimal multi-file Arcis project. Demonstrates:
 
-- ES-module-style `import` / `export` syntax (same as TypeScript).
+- Python-style `import` (namespace) and `from ... import ...` (named);
+  ES-style `export` (same as TypeScript).
 - Named exports (`export function ...`, `export const ...`).
 - Default exports (`export default function ...`).
-- Named imports (`import { foo } from "bar"`).
-- Default imports (`import foo from "bar"`).
+- Named imports (`from mate import sumar, PI;`).
+- Default imports (`from mate import default as calcula;`).
+- Aliased imports (`from texto import gritarFuerte as GRITAR;`).
 - Path resolution: imports are relative to the **importing** file's
-  directory, without a `./` prefix (e.g. `from "mate"` resolves
+  directory, without a `./` prefix (e.g. `from mate import ...` resolves
   to `<dir>/mate.tsr`).
 
 ## Run it
@@ -25,9 +27,9 @@ looks for `main.tsr` inside it. (You can also pass
 
 ```
 examples/mods/
-├── main.tsr   # entry point — imports from "mate" and "texto"
+├── main.tsr   # entry point — imports from mate and texto
 ├── mate.tsr   # math helpers: PI, sumar, calcula (default export)
-└── texto.tsr  # string helper: shout
+└── texto.tsr  # string helper: gritar (re-exported as gritarFuerte)
 ```
 
 ### `mate.tsr`
@@ -50,35 +52,38 @@ Exports two named items (`PI`, `sumar`) and one default export
 ### `texto.tsr`
 
 ```ts
-export function shout(s: string): string {
+export function gritar(s: string): string {
     return s + "!!!";
 }
+
+export { gritar as gritarFuerte };
 ```
 
-A single named export.
+A named export (`gritar`), re-exported under an alias (`gritarFuerte`).
 
 ### `main.tsr`
 
 ```ts
-import { sumar, PI } from "mate";
-import calcula from "mate";
-import { shout } from "texto";
+from mate import sumar, PI;
+from mate import default as calcula;
+from texto import gritarFuerte as GRITAR;
 
 print("PI = " + PI);
 print("2 + 3 = " + sumar(2, 3));
-print("calcula(10) = " + calcula(10));
-print(shout("hola"));
+print("calcula(10) = " + calcula(10)); // default export
+print(GRITAR("hello"));
 ```
 
-Mixed import styles: named (`{ sumar, PI }`), default (`calcula`),
-and from another module (`shout` from `texto`).
+Mixed import styles: named (`sumar, PI`), default (`default as calcula`),
+and an aliased re-export from another module (`gritarFuerte as GRITAR`
+from `texto`).
 
 ## How it works
 
 ### Path resolution
 
 The linker resolves import specifiers relative to the **importing**
-file's directory. `from "mate"` inside `main.tsr` resolves to
+file's directory. `from mate import ...` inside `main.tsr` resolves to
 `<dir>/mate.tsr`. There is no `./` prefix required (Node-style
 convenience).
 
@@ -111,7 +116,7 @@ The driver writes these to `bin/` (default layout) or
 PI = 3.14
 2 + 3 = 5
 calcula(10) = 31.400000000000002
-hola!!!
+hello!!!
 ```
 
 ## Notes
@@ -119,9 +124,10 @@ hola!!!
 - For a single-file program, you don't need this folder layout.
   Use this only when you have multiple `.tsr` files that import
   each other.
-- To use external Rust crates (HTTP, JSON, regex, …), place a
-  `Cargo.toml` next to `main.tsr` and add the dep there. Then
-  `import { Client } from "crate:reqwest";`.
+- External Rust crates (HTTP, JSON, regex, …) are meant to work via a
+  `Cargo.toml` next to `main.tsr` plus `from crate:reqwest import Client;`,
+  but that import form is currently a parse error (not yet implemented) —
+  don't rely on it.
 
 ## Related examples
 

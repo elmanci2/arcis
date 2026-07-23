@@ -9,3 +9,6 @@ description = "Arcis semantic checks: unused declarations, duplicates, break/con
 
 [dependencies]
 arcis-ast = { workspace = true }
+[dev-dependencies]
+arcis-lexer = { workspace = true }
+arcis-parser = { workspace = true }

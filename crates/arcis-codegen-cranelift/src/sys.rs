@@ -28,9 +28,26 @@ pub(crate) fn try_emit_call(
     macro_rules! c0s { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::String) }}; }
     macro_rules! c0n { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::Number) }}; }
     macro_rules! c0a { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::Array) }}; }
+    macro_rules! c0b { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); let raw=builder.inst_results(cl)[0]; let z=builder.ins().f64const(0.0); (builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, raw, z), ArcisType::Boolean) }}; }
+    macro_rules! c1b { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); let raw=builder.inst_results(cl)[0]; let z=builder.ins().f64const(0.0); (builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, raw, z), ArcisType::Boolean) }}; }
     macro_rules! c1s { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::String) }}; }
     macro_rules! c1n { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::Number) }}; }
     macro_rules! c1a { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::Array) }}; }
+    macro_rules! c1o { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::Object) }}; }
+    // `cmd + optional args-array` call forms: `sys.exec("ls")` and
+    // `sys.exec("ls", ["-la"])` both hit the same 2-arg runtime function;
+    // a missing array is passed as a NULL (0) handle.
+    macro_rules! c2opt { ($f:ident, $args:expr, $ret:expr) => {{
+        let (v0,_)=expr::emit(builder,fctx,&$args[0],runtime,user_fns,module)?;
+        let v1 = if $args.len() >= 2 {
+            let (v,_)=expr::emit(builder,fctx,&$args[1],runtime,user_fns,module)?; v
+        } else {
+            builder.ins().iconst(I64, 0)
+        };
+        let c=module.declare_func_in_func(runtime.$f,builder.func);
+        let cl=builder.ins().call(c,&[v0,v1]);
+        (builder.inst_results(cl)[0], $ret)
+    }}; }
     macro_rules! c1v { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); builder.ins().call(c,&[v]); (builder.ins().iconst(I64,0), ArcisType::Void) }}; }
     macro_rules! c2v { ($f:ident, $a:expr, $b:expr) => {{ let (v0,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let (v1,_)=expr::emit(builder,fctx,$b,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); builder.ins().call(c,&[v0,v1]); (builder.ins().iconst(I64,0), ArcisType::Void) }}; }
 
@@ -49,9 +66,9 @@ pub(crate) fn try_emit_call(
         "copy"         if args.len()==2 => Some(c2v!(fs_copy, &args[0], &args[1])),
         "move" | "rename" if args.len()==2 => Some(c2v!(fs_move, &args[0], &args[1])),
 
-        "exists"    if args.len()==1 => Some(c1n!(path_exists, &args[0])),
-        "isFile"    if args.len()==1 => Some(c1n!(path_is_file, &args[0])),
-        "isDir"     if args.len()==1 => Some(c1n!(path_is_dir, &args[0])),
+        "exists"    if args.len()==1 => Some(c1b!(path_exists, &args[0])),
+        "isFile"    if args.len()==1 => Some(c1b!(path_is_file, &args[0])),
+        "isDir"     if args.len()==1 => Some(c1b!(path_is_dir, &args[0])),
         "fileSize"  if args.len()==1 => Some(c1n!(path_file_size, &args[0])),
         "fileInfo"  if args.len()==1 => Some(c1s!(path_file_info, &args[0])),
         "absolute"  if args.len()==1 => Some(c1s!(path_absolute, &args[0])),
@@ -67,9 +84,9 @@ pub(crate) fn try_emit_call(
 
         "currentPid" if args.is_empty() => Some(c0n!(process_current_pid)),
         "parentPid"  if args.is_empty() => Some(c0n!(process_parent_pid)),
-        "exec"       if args.len()>=1   => Some(c1s!(process_exec, &args[0])),
-        "process"    if args.len()>=1   => Some(c1s!(process_run, &args[0])),
-        "spawn"      if args.len()>=1   => Some(c1n!(process_spawn, &args[0])),
+        "exec"       if args.len()>=1   => Some(c2opt!(process_exec, args, ArcisType::String)),
+        "process"    if args.len()>=1   => Some(c2opt!(process_run_obj, args, ArcisType::Object)),
+        "spawn"      if args.len()>=1   => Some(c2opt!(process_spawn, args, ArcisType::Number)),
         "kill"       if args.len()==1   => Some(c1v!(process_kill, &args[0])),
         "processes"  if args.is_empty() => Some(c0a!(process_list)),
 
@@ -92,6 +109,8 @@ pub(crate) fn try_emit_subns(
     macro_rules! c0s { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::String) }}; }
     macro_rules! c0n { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::Number) }}; }
     macro_rules! c0a { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); (builder.inst_results(cl)[0], ArcisType::Array) }}; }
+    macro_rules! c0b { ($f:ident) => {{ let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[]); let raw=builder.inst_results(cl)[0]; let z=builder.ins().f64const(0.0); (builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, raw, z), ArcisType::Boolean) }}; }
+    macro_rules! c1b { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); let raw=builder.inst_results(cl)[0]; let z=builder.ins().f64const(0.0); (builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, raw, z), ArcisType::Boolean) }}; }
     macro_rules! c1s { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::String) }}; }
     macro_rules! c1n { ($f:ident, $a:expr) => {{ let (v,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); let cl=builder.ins().call(c,&[v]); (builder.inst_results(cl)[0], ArcisType::Number) }}; }
     macro_rules! c2v { ($f:ident, $a:expr, $b:expr) => {{ let (v0,_)=expr::emit(builder,fctx,$a,runtime,user_fns,module)?; let (v1,_)=expr::emit(builder,fctx,$b,runtime,user_fns,module)?; let c=module.declare_func_in_func(runtime.$f,builder.func); builder.ins().call(c,&[v0,v1]); (builder.ins().iconst(I64,0), ArcisType::Void) }}; }
@@ -133,7 +152,7 @@ pub(crate) fn try_emit_subns(
         ("disk", "used")  if args.len()==1 => Some(c1n!(disk_free, &args[0])), // stub
         ("disk", "total") if args.len()==1 => Some(c1n!(disk_free, &args[0])), // stub
 
-        ("net", "online")     if args.is_empty() => Some(c0n!(net_online)),
+        ("net", "online")     if args.is_empty() => Some(c0b!(net_online)),
         ("net", "publicIp")   if args.is_empty() => Some(c0s!(net_public_ip)),
         ("net", "interfaces") if args.is_empty() => Some(c0a!(net_interfaces)),
         ("net", "hostname")   if args.is_empty() => Some(c0s!(os_hostname)),

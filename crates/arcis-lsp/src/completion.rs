@@ -215,14 +215,15 @@ fn is_known_ns(name: &str) -> bool {
     )
 }
 
-/// Parse `full_text` into the shared symbol table. Returns an empty
-/// list on lex/parse failure (e.g. the user is mid-edit and the file
-/// is momentarily invalid) rather than surfacing an error — completion
-/// should degrade gracefully, not disappear.
+/// Parse `full_text` into the shared symbol table, with inferred types on
+/// unannotated bindings. Mid-edit syntax errors degrade gracefully: the
+/// broken line is blanked and the rest of the file still completes; a
+/// hopeless document returns an empty list rather than an error.
 fn parse_symbols(full_text: &str) -> Vec<Symbol> {
-    let Ok(tokens) = lex(full_text) else { return Vec::new() };
-    let Ok(program) = parse(tokens) else { return Vec::new() };
-    symbols::collect_symbols(&program)
+    match symbols::parse_lenient(full_text) {
+        Some(program) => symbols::collect_symbols(&program),
+        None => Vec::new(),
+    }
 }
 
 /// If `name` names a locally-declared enum, return its `(variant,

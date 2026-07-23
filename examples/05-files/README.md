@@ -89,9 +89,10 @@ dir still exists? true (left in place — rm -rf to remove)
   codegen calls `.unwrap()` on the result, so failures panic at
   runtime. Wrap your call sites in `try`/`catch` if you need to
   handle errors (not yet implemented in v1).
-- For external crates (HTTP, JSON, regex, …), add the crate to a
-  `Cargo.toml` next to `main.tsr` and `import { … } from "crate:<name>";`
-  — see [`examples/mods/`](../mods/) for the layout.
+- External crates (HTTP, JSON, regex, …) are meant to work via a
+  `Cargo.toml` next to `main.tsr` plus `from crate:<name> import ...;`,
+  but that import form is currently a parse error (not yet implemented)
+  — see [`examples/mods/`](../mods/) for the layout and caveat.
 
 ## Related examples
 

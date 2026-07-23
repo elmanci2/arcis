@@ -267,7 +267,11 @@ fn collect_exports(program: &Program) -> Exports {
                 Stmt::Function(f) => {
                     exp.named.insert(f.name.clone());
                 }
-                Stmt::Let { name, .. } | Stmt::Const { name, .. } => {
+                Stmt::Let { name, .. }
+                | Stmt::Const { name, .. }
+                | Stmt::TypeAlias { name, .. }
+                | Stmt::Interface { name, .. }
+                | Stmt::Enum { name, .. } => {
                     exp.named.insert(name.clone());
                 }
                 _ => {}
@@ -334,6 +338,17 @@ fn validate_imports(modules: &HashMap<PathBuf, Module>) -> Result<(), String> {
                                 )
                             })?;
                             for n in names {
+                                // `default` refers to the module's
+                                // `export default`, not a named export.
+                                if n.name == "default" {
+                                    if target_mod.exports.default.is_none() {
+                                        return Err(format!(
+                                            "`{}` has no default export",
+                                            module.join(".")
+                                        ));
+                                    }
+                                    continue;
+                                }
                                 if !target_mod.exports.named.contains(&n.name) {
                                     return Err(format!(
                                         "`{}` does not export a symbol named `{}`",

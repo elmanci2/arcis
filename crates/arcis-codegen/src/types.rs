@@ -113,7 +113,9 @@ pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
         Type::Object { name, fields } => (name, fields),
         _ => return,
     };
-    out.push_str("#[derive(Clone)]\n");
+    // `Default` backs `.find()`'s not-found value and `.pop()` on empty
+    // arrays; `Debug` gives `any`-ish printing a fallback.
+    out.push_str("#[derive(Clone, Debug, Default)]\n");
     out.push_str("pub struct ");
     out.push_str(name);
     out.push_str(" {\n");
@@ -133,18 +135,24 @@ pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
 
 /// Emit a `pub enum Name { A, B = 5, C }` for an Arcis `enum` declaration.
 /// Called only from the root module, same as [`emit_struct_def`].
+/// Arcis enums follow TypeScript *numeric enum* semantics: every variant IS
+/// a number (`Category.Food == 10` is true, a `number`-typed field can hold
+/// it, printing shows the number). So instead of a Rust `enum` (whose values
+/// don't mix with `f64` without casts), emit a unit struct with one `f64`
+/// associated const per variant — `Category::Electronics` is then a plain
+/// `f64` everywhere. This matches the Cranelift backend, where variants are
+/// compile-time `f64const`s.
 pub(crate) fn emit_enum_def(out: &mut String, name: &str, variants: &[(String, Option<i64>)]) {
-    out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    out.push_str("pub enum ");
+    out.push_str("pub struct ");
+    out.push_str(name);
+    out.push_str(";\n#[allow(non_upper_case_globals)]\nimpl ");
     out.push_str(name);
     out.push_str(" {\n");
+    let mut next = 0i64;
     for (variant, value) in variants {
-        out.push_str("    ");
-        out.push_str(variant);
-        if let Some(v) = value {
-            out.push_str(&format!(" = {}", v));
-        }
-        out.push_str(",\n");
+        let v = value.unwrap_or(next);
+        out.push_str(&format!("    pub const {}: f64 = {}f64;\n", variant, v));
+        next = v + 1;
     }
     out.push_str("}\n\n");
 }

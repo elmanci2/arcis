@@ -16,20 +16,49 @@ use crate::builtins;
 ///
 /// `before` is the text on the cursor line *up to* the cursor.
 /// `after`  is the text on the cursor line *starting at* the cursor.
-pub fn hover_at(before: &str, after: &str) -> Option<Hover> {
+/// Builtins (`sys.*`, `print`, …) are checked first; anything else is
+/// looked up in the document's own symbol table (`full_text`), whose
+/// details carry inferred types for unannotated bindings.
+pub fn hover_at(full_text: &str, before: &str, after: &str) -> Option<Hover> {
     let ident = identifier_at(before, after)?;
     let label = chain_label_at(before, after).unwrap_or_else(|| ident.clone());
 
-    let b = builtins::find_by_label(&label)
-        .or_else(|| builtins::find_by_label(&ident))?;
+    if let Some(b) = builtins::find_by_label(&label)
+        .or_else(|| builtins::find_by_label(&ident))
+    {
+        let body = format!(
+            "```arcis\n{}\n```\n\n_{}_\n\n{}",
+            b.detail,
+            kind_label(b.kind),
+            b.documentation,
+        );
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: body,
+            }),
+            range: Some(identifier_range(before, after)),
+        });
+    }
 
-    let body = format!(
-        "```arcis\n{}\n```\n\n_{}_\n\n{}",
-        b.detail,
-        kind_label(b.kind),
-        b.documentation,
+    // User-defined symbol: parse (leniently) + infer, then look the name up.
+    let program = crate::symbols::parse_lenient(full_text)?;
+    let syms = crate::symbols::collect_symbols(&program);
+    let sym = syms.iter().find(|s| s.name == ident)?;
+
+    let mut body = format!(
+        "```arcis\n{}\n```\n\n_{}_",
+        sym.detail,
+        sym.kind.label(),
     );
-
+    if !sym.enum_variants.is_empty() {
+        let variants: Vec<String> = sym
+            .enum_variants
+            .iter()
+            .map(|(n, v)| format!("{} = {}", n, v))
+            .collect();
+        body.push_str(&format!("\n\n{}", variants.join(", ")));
+    }
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,

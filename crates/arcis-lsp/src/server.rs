@@ -124,7 +124,7 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
             let pos = params.text_document_position_params.position;
             let text = state.docs.get(uri).unwrap_or_default();
             let (before, after) = split_at_position(text, pos);
-            let hover = crate::hover::hover_at(&before, &after);
+            let hover = crate::hover::hover_at(text, &before, &after);
             async move { Ok(hover) }
         })
         // ── Go-to-definition ──────────────────────────────────────

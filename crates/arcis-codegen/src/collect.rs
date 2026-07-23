@@ -454,6 +454,31 @@ pub(crate) fn resolve_type_aliases(program: &mut Program, extra: &HashMap<String
     }
 }
 
+/// Collect every top-level `type X = ...;` declaration (including
+/// `export type ...`) across ALL modules, so aliases resolve across module
+/// boundaries — a `type DiscountCode = ...` declared in `models.tsr` must
+/// work in `pricing.tsr` too. Only top-level declarations are global;
+/// function-local aliases stay local to their module's own resolution pass.
+pub(crate) fn collect_global_aliases(modules: &[Module]) -> HashMap<String, Type> {
+    let mut raw = HashMap::new();
+    for m in modules {
+        for stmt in &m.program.stmts {
+            match stmt {
+                Stmt::TypeAlias { name, ty, .. } => {
+                    raw.insert(name.clone(), ty.clone());
+                }
+                Stmt::ExportDecl(inner) => {
+                    if let Stmt::TypeAlias { name, ty, .. } = inner.as_ref() {
+                        raw.insert(name.clone(), ty.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    raw
+}
+
 fn collect_alias_decl(stmt: &Stmt, raw: &mut HashMap<String, Type>) {
     match stmt {
         Stmt::TypeAlias { name, ty, .. } => {

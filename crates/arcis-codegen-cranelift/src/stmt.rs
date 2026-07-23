@@ -52,9 +52,13 @@ pub(crate) fn emit_stmt(
         }
         Stmt::Let { name, ty, value, .. } | Stmt::Const { name, ty, value, .. } => {
             let (v, inferred_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
+            // `any` has no fixed representation — the initializer's own
+            // inferred type is strictly more precise, so prefer it (the
+            // Rust backend does the same by dropping the annotation).
+            let is_any = matches!(ty, Some(arcis_ast::Type::Primitive(p)) if p == "any");
             let resolved = match ty {
-                Some(t) => from_ast(t, fctx.enum_names())?,
-                None => inferred_ty,
+                Some(t) if !is_any => from_ast(t, fctx.enum_names())?,
+                _ => inferred_ty,
             };
             fctx.define(name, resolved, v, builder);
             // Track element type for array bindings and field types for objects.
@@ -182,6 +186,12 @@ pub(crate) fn emit_stmt(
 
             let cond_block = builder.create_block();
             let body_block = builder.create_block();
+            // `continue` must still advance the index — jumping straight
+            // back to `cond_block` would re-test the SAME element forever.
+            // So the increment lives in its own block (like `emit_for`'s
+            // update block), and both `continue` and normal body
+            // fallthrough route through it.
+            let incr_block = builder.create_block();
             let after_block = builder.create_block();
 
             // Index variable: Cranelift SSA Variable for the counter.
@@ -201,7 +211,7 @@ pub(crate) fn emit_stmt(
 
             builder.switch_to_block(body_block);
             fctx.push_loop(LoopFrame {
-                continue_target: cond_block,
+                continue_target: incr_block,
                 break_target: after_block,
                 after: after_block,
                 try_depth_at_entry: fctx.open_try_count,
@@ -237,21 +247,31 @@ pub(crate) fn emit_stmt(
                 (as_f64, ArcisType::Number)
             };
             fctx.define(name, elem_ty, elem_cl_val, builder);
+            // Object-typed elements: the loop variable inherits the array's
+            // tracked field shape so `x.field` inside the body is typed.
+            if let Expr::Ident(arr_name) = iterable.as_ref() {
+                fctx.copy_object_fields(arr_name, name);
+            }
 
             for s in body {
                 emit_stmt(builder, fctx, s, runtime, user_fns, module)?;
             }
             fctx.pop_loop();
+            if !is_block_terminated(builder) {
+                builder.ins().jump(incr_block, &[]);
+            }
 
-            // Increment counter.
+            // Increment counter (also the `continue` target).
+            builder.switch_to_block(incr_block);
             let cur = builder.use_var(idx_var);
             let next = builder.ins().fadd(cur, one);
             fctx.rebind("__for_i", next, builder);
             if !is_block_terminated(builder) {
                 builder.ins().jump(cond_block, &[]);
             }
-            builder.seal_block(cond_block);
             builder.seal_block(body_block);
+            builder.seal_block(incr_block);
+            builder.seal_block(cond_block);
 
             builder.switch_to_block(after_block);
             builder.seal_block(after_block);
@@ -698,7 +718,7 @@ fn emit_throw(
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     let (val, ty) = expr::emit(builder, fctx, expr_node, runtime, user_fns, module)?;
-    let handle = crate::expr::promote_to_string(builder, val, ty, module, runtime)?;
+    let handle = crate::expr::promote_to_string(builder, fctx, val, ty, module, runtime)?;
     let callee = module.declare_func_in_func(runtime.throw, builder.func);
     builder.ins().call(callee, &[handle]);
     Ok(())

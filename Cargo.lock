@@ -180,6 +180,8 @@ name = "arcis-validation"
 version = "0.1.0"
 dependencies = [
  "arcis-ast",
+ "arcis-lexer",
+ "arcis-parser",
 ]
 
 [[package]]

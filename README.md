@@ -89,29 +89,37 @@ arcis build --backend cranelift my-project/
 ./bin/my-project
 ```
 
-The Cranelift backend is feature-parallel to the Rust one in scope: it
-covers everything in "Supported subset" for Phase 1 except arrays,
-methods, objects, modules and `sys.*`. See
+The Cranelift backend is feature-parallel to the Rust one for almost
+everything in "Supported subset" below, including arrays, objects, array
+methods with callbacks (`find`/`filter`/`map`/`reduce`), shadowing,
+`enum`, non-capturing arrow functions, spread (`...`) in array/object
+literals, `switch`/`case`, and `try`/`catch`/`throw`. See
 [`crates/arcis-codegen-cranelift/`](crates/arcis-codegen-cranelift/) for
-the implementation and the upstream plan at
-`~/.claude/plans/imperative-seeking-cerf.md` (Phases 2–6) for the rest.
+the implementation and [`docs/language-reference.md`](docs/language-reference.md)
+for backend-specific design notes and caveats (e.g. how `try`/`catch` is
+built on `setjmp`/`longjmp` there instead of `catch_unwind`). Unions,
+interfaces/type aliases used as object shapes, and `any` still erase the
+same way as the Rust backend; closures-with-capture, destructuring,
+template literals, classes, and generics are not implemented in either
+backend yet.
 
 ## Supported subset
 
 - `let` / `const` with optional type annotation
 - Primitive types: `string`, `number`, `boolean`, `void`
 - `function name(p: T, ...): T { ... }` with `return`
-- `if (cond) { ... } else if (...) { ... } else { ... }`, `while`, `for (init; cond; upd)`, `break`, `continue`
+- `if (cond) { ... } else if (...) { ... } else { ... }`, `while`, `for (init; cond; upd)`, `for (let x of arr)`, `switch`/`case`/`default`, `break`, `continue`
+- `try { ... } catch (e) { ... }`, `throw expr;`
+- Non-capturing arrow functions: `(a: number, b: number): number => a + b`
+- `enum Name { A, B, C }`
 - `print(expr);` (shorthand for `println!`)
-- Literals: `"string"`, `42`, `3.14`, `true`, `false`, `[...]`, `{ key: value }`
+- Literals: `"string"`, `42`, `3.14`, `true`, `false`, `[...]`, `{ key: value }`, spread (`...arr`, `...obj`)
 - Inline object types: `let p: { name: string, age: number } = ...`
+- Arrays and array methods: `push`/`pop`/`length`/`find`/`filter`/`map`/`reduce`
 - Reassignment (`x = ...`), indexed assignment (`arr[i] = ...`), field assignment (`obj.x = ...`)
 - Operators: `+ - * / % == != < > <= >= && || !`
 - Comments `//` and `/* ... */`
 - **Modules**: `import`/`export` with TypeScript syntax (see [Modules](#modules))
-- Note: `for (let x of arr)`, `arr.length`, and the array methods
-  (`push`/`pop`/`find`/`filter`/`map`/…) are listed above for completeness
-  but are not yet supported by the Cranelift backend (Phase 2+).
 
 ## Example
 
@@ -295,12 +303,27 @@ graph and pipeline diagram.
   union/intersection types erase to their first member's Rust type, and
   `any`/`as`/`as const`/`!` have no runtime effect (matching TypeScript's own
   erasure model).
-- The codegen follows TS semantics but does not implement shadowing, closures,
-  or first-class functions yet.
-- The Cranelift backend only covers primitives, `let`/`const`, control flow,
-  and function calls so far — unions, interfaces, type aliases, and `any`
-  fall back to an opaque handle or an error there (the Rust backend supports
-  all of them).
+- Shadowing is handled via an alpha-renaming pre-pass (not real lexical
+  scoping in the generated code); closures that capture variables and
+  first-class functions passed around as values are not implemented in
+  either backend.
+- The Cranelift backend's `try`/`catch` is built on `setjmp`/`longjmp`
+  (called directly from the generated IR) instead of `catch_unwind`; like
+  the Rust backend's `AssertUnwindSafe` approach, a thrown value leaks the
+  memory of any unwound frame's heap allocations (acceptable for now since
+  exceptions are not meant to be a hot-loop pattern).
+- Cranelift backend, pre-existing bug: `continue`/`break` inside an `if`
+  nested in a `for-of` loop hangs instead of terminating. Confirmed to
+  predate all of the feature work above (reproduces on a clean checkout);
+  not yet root-caused.
+- Cranelift backend: string-promotion of `object`/`any`-typed values
+  (e.g. printing an object or a union-typed value that erases to `any`)
+  is not implemented — `examples/types/types.tsr` fails there with
+  "cannot promote object to string" (the Rust backend handles this via
+  `Debug`/`Display` derives).
+- Unions, interfaces/type aliases, and `any` erase to an opaque handle the
+  same way in both backends; nothing full-blown like a real tagged-union
+  runtime representation exists yet.
 
 ## Next steps (ideas)
 

@@ -27,12 +27,14 @@ pub(crate) fn generate(
     enum_names: &HashSet<String>,
     type_level_names: &HashSet<String>,
     path_to_id: &HashMap<std::path::PathBuf, String>,
+    env: &arcis_validation::TypeEnv,
 ) -> Result<String, String> {
     let mut out = String::new();
     out.push_str("#![allow(unused_parens, non_snake_case, while_true, unused_imports, dead_code)]\n\n");
 
     let reassigned = crate::collect::collect_reassigned(&m.program);
     let types = crate::collect::collect_types(&m.program);
+    let type_scope = crate::collect::collect_type_scope(&m.program);
     // Local names bound by namespace imports (`import utils;` /
     // `import utils as u;`) — member access on them (`u.item`) must emit
     // a Rust path (`u::item`), not a field access.
@@ -59,6 +61,8 @@ pub(crate) fn generate(
         is_root,
         enum_names,
         namespace_names: &namespace_names,
+        env,
+        type_scope: &type_scope,
     };
 
     // The root declares every sub-module and defines the object-type
@@ -359,6 +363,8 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
         namespace_names: ctx.namespace_names,
+        env: ctx.env,
+        type_scope: ctx.type_scope,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n\n");

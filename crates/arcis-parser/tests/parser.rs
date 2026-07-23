@@ -286,3 +286,90 @@ fn parses_crate_specifier() {
         other => panic!("expected FromImport, got {:?}", other),
     }
 }
+
+// ── Optional types (`T?`) and `??` ──────────────────────────────────────
+
+#[test]
+fn parses_optional_type_annotation() {
+    let tokens = arcis_lexer::lex("let x: number? = null;").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::Let { ty: Some(t), .. } => {
+            assert!(t.is_optional());
+            assert_eq!(t.unwrap_optional().primitive_name(), "number");
+        }
+        other => panic!("expected Let, got {:?}", other),
+    }
+}
+
+#[test]
+fn union_with_null_normalizes_to_optional() {
+    let tokens = arcis_lexer::lex("let x: string | null = null;").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::Let { ty: Some(t), .. } => {
+            assert!(t.is_optional());
+            assert_eq!(t.unwrap_optional().primitive_name(), "string");
+        }
+        other => panic!("expected Let, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_nullish_coalescing_operator() {
+    let tokens = arcis_lexer::lex("let x: number = a ?? 0;").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::Let { value, .. } => {
+            assert!(matches!(
+                value,
+                arcis_ast::Expr::Binary { op: arcis_ast::BinOp::NullishCoalesce, .. }
+            ));
+        }
+        other => panic!("expected Let, got {:?}", other),
+    }
+}
+
+#[test]
+fn rejects_double_question_mark_in_type_position() {
+    let tokens = arcis_lexer::lex("let x: number?? = null;").unwrap();
+    assert!(arcis_parser::parse(tokens).is_err());
+}
+
+#[test]
+fn optional_interface_field_folds_into_optional_type() {
+    let tokens = arcis_lexer::lex("interface P { name: string, nickname?: string }").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::Interface { fields, .. } => {
+            let (_, ty, optional) = &fields[1];
+            assert!(*optional);
+            assert!(ty.is_optional());
+        }
+        other => panic!("expected Interface, got {:?}", other),
+    }
+}
+
+// ── Robustness: parse errors must not panic ──────────────────────────────
+
+#[test]
+fn invalid_for_update_returns_parse_error_not_panic() {
+    // Regression test: `parse_assign_no_semi` used to `.unwrap()` internally
+    // and return a bare `Stmt`, so invalid syntax in a `for` loop's update
+    // clause crashed the compiler with a raw panic instead of a ParseError.
+    let tokens = arcis_lexer::lex("for (let i = 0; i < 10; i = ) { print(i); }").unwrap();
+    let result = arcis_parser::parse(tokens);
+    assert!(result.is_err(), "invalid `for` update clause must be a clean ParseError, not a panic");
+}
+
+#[test]
+fn valid_for_update_assignment_still_parses() {
+    let tokens = arcis_lexer::lex("for (let i = 0; i < 10; i = i + 1) { print(i); }").unwrap();
+    let program = arcis_parser::parse(tokens).unwrap();
+    match &program.stmts[0] {
+        arcis_ast::Stmt::For { update: Some(update), .. } => {
+            assert!(matches!(update.as_ref(), arcis_ast::Stmt::Assign { .. }));
+        }
+        other => panic!("expected For, got {:?}", other),
+    }
+}

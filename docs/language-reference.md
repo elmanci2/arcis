@@ -98,7 +98,8 @@ export_stmt  = "export" "default" ( "function" ... | expression ) ";"
              | "export" interface_stmt
              | "export" enum_stmt ;
 
-expression   = or ;
+expression   = nullish ;
+nullish      = or ( "??" or )* ;                               -- loosest-binding; see "Null safety"
 or           = and ( "||" and )* ;
 and          = equality ( "&&" equality )* ;
 equality     = comparison ( ( "==" | "!=" ) comparison )* ;
@@ -125,7 +126,7 @@ object_field  = IDENT ":" expression | "..." expression ;
 type         = union_type ;
 union_type   = intersection_type ( "|" intersection_type )* ;
 intersection_type = postfix_type ( "&" postfix_type )* ;
-postfix_type = primary_type "[]"* ;
+postfix_type = primary_type "[]"* "?"? ;                      -- trailing `?` makes it optional
 primary_type = "string" | "number" | "boolean" | "void" | "any"
              | "null" | "undefined"
              | STRING | NUMBER | "true" | "false"                -- literal types
@@ -170,12 +171,13 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | Literal types          | ✔ `"left" \| "right" \| "center"`, `-1 \| 0 \| 1`, `true \| false` |
 | Type aliases           | ✔ `type X = ...;` (including `export type`) — resolved away before codegen |
 | Interfaces             | ✔ `interface X { ... }`, `extends` (multiple, merged fields) — emits a named `pub struct` |
-| Optional properties    | ✔ `{ name?: string }` → `Option<T>` field, filled with `None` when omitted |
+| Optional properties    | ✔ `{ name?: string }` → `Option<T>` field, filled with `None` when omitted; `field?: T` is exactly `field: T?` — see "Null safety" |
+| Optional types (`T?`) / `??` / null safety | ✔ **compile-time enforced** on both backends — every optional value must be resolved (`?? fallback`, a narrowing null-check, or `!`) before it reaches a place that expects a guaranteed value, or the build fails. See the dedicated "Null safety" section below. |
 | `any`                  | ✔ `let`/`const` bindings skip the Rust annotation (inferred from the initializer); function params/returns lower to `Box<dyn Any>` |
-| `null` / `undefined`   | ✔ parsed as types and expressions; both erase to `()` (no `Option`-based runtime yet) |
+| `null` / `undefined`   | ✔ parsed as types and expressions; erase to `()` **except** where they populate a `T?` slot — see "Null safety" |
 | Type assertions (`as`) | ✔ `expr as Type` — compile-time only, no runtime effect (matches TS) |
 | `as const`             | ✔ parsed and erased the same way as `as Type` |
-| Non-null assertion (`!`) | ✔ postfix `!` — compile-time only, no runtime null check yet |
+| Non-null assertion (`!`) | ✔ postfix `!` — a real, checked unwrap on a `T?` value (Rust backend: real `.unwrap()`; Cranelift: trusts the null-safety checker's static guarantee); a no-op on an already non-optional value — see "Null safety" |
 | Function types          | ✔ `(a: T, b: U) => R` in type position (Rust backend only) |
 | Shadowing              | ✔ `let x` re-declared in a nested block — resolved by an alpha-renaming pre-pass before validation/codegen ever see it (both backends) |
 | Arrow functions         | ✔ `(x: number): number => x * 2`, block or expression body — **no variable capture**. Rust backend: lowers to a non-capturing closure. Cranelift backend: lambda-lifted into a synthetic top-level function (sound since there's no capture). Omitted return types and inline-callback parameter types are filled in by the inference pass on both backends. Usable inline as `.map`/`.filter`/`.find`/`.reduce` callbacks |
@@ -208,7 +210,8 @@ equivalents:
 | `boolean`| `bool`         |
 | `void`   | `()`           |
 | `any`    | `Box<dyn std::any::Any>` (function params/returns); no annotation on `let`/`const` (inferred) |
-| `null`, `undefined` | `()` |
+| `null`, `undefined` (as a type on their own) | `()` |
+| `T?`     | `Option<T>` — see "Null safety" below |
 | `T[]`    | `Vec<T>`       |
 | `{ k: T, opt?: U }` | `pub struct { pub k: T, pub opt: Option<U> }` |
 | `A \| B`, `A & B` | the Rust type of `A` (first member) — see "Type erasure" below |
@@ -232,13 +235,77 @@ same as TypeScript's own erasure model. Two consequences:
   idiomatic use of a union is a same-shaped literal union (TypeScript's own
   "string enum" pattern, e.g. `"left" | "right" | "center"`), not a
   genuinely heterogeneous union like `string | number`.
-- **Type assertions** (`as Type`, `as const`) and the **non-null assertion**
-  (`!`) have no runtime effect, exactly like in TypeScript — Arcis emits
-  just the inner expression.
+- **Type assertions** (`as Type`, `as const`) have no runtime effect,
+  exactly like in TypeScript — Arcis emits just the inner expression. The
+  **non-null assertion** (`!`) is the one exception: on a genuinely
+  optional (`T?`) expression it compiles to a real, checked unwrap (a Rust
+  `.unwrap()` — panics with a clear message if you were wrong; on
+  Cranelift it trusts the sentinel is resolved, per the null-safety
+  checker's guarantee) — see "Null safety" below. On an already
+  non-optional expression `!` is a no-op, same as `as`.
 - **`type` aliases** are resolved away entirely before codegen runs: every
   reference to an alias is replaced by its underlying type, so nothing
   downstream needs to know aliases exist. **`interface`** names are *not*
   aliases — each interface gets its own emitted struct.
+
+## Null safety
+
+Arcis enforces a single, simple guarantee: **a `T?` value can never reach a
+place that expects a guaranteed `T` without being resolved first.** This is
+a hard compile error, not a lint — on both backends, identically.
+
+### Declaring an optional type
+
+Three equivalent spellings, all normalized to the same internal type:
+
+```ts
+let a: number?;              // postfix `?`
+let b: number | null;        // union with `null`/`undefined`
+interface P { nickname?: string; } // a `?` field marker IS `nickname: string?`
+```
+
+### The three ways to resolve one
+
+| Form | Meaning | Requirement |
+|------|---------|-------------|
+| `x ?? fallback` | use `x` if present, `fallback` otherwise | `fallback` must ITSELF be non-optional — "two optionals" (`x ?? y` where `y` is also `T?`) is a compile error. Chain another `?? realDefault` instead. |
+| `if (x != null) { ... }` | proves `x` is present for the rest of that block | recognized for a plain identifier only (`if (obj.field != null)` isn't narrowed — bind the field to a local first: `let f = obj.field; if (f != null) { ... }`) |
+| `if (x == null) { return/throw/break/continue; }` | "guard clause" — proves `x` is present for every statement AFTER the `if`, in the same function/block | the branch must unconditionally exit (no `else`, and the branch's last statement is `return`/`throw`/`break`/`continue`) |
+| `x!` | explicit, deliberate assertion ("I already know this is present") | your responsibility — wrong, and the Rust backend panics with a clear message at that line; the Cranelift backend trusts you (no runtime check yet, see caveat below) |
+
+`null`/`undefined` literals are also checked directly: assigning, passing,
+or returning one where the target isn't `T?` is rejected the same way.
+
+### What counts as "a place that expects a guaranteed value" (a *sink*)
+
+- a `let`/`const` with an explicit non-optional type,
+- a `return` inside a function whose return type is non-optional,
+- an argument passed to a parameter of a known function,
+- the fallback (right-hand side) of `??` itself,
+- operands of arithmetic/comparison operators (other than the sanctioned
+  `== null` / `!= null` idiom),
+- the receiver of `.field` / `[index]`,
+- the single argument to `print`/`str`.
+
+Annotations stay optional (pun intended) everywhere the type checker's
+[inference](#how-types-flow) can fill them in — `let x = maybeFind();`
+infers `x` as `T?` automatically if `maybeFind` returns `T?`; you only
+have to write `?` when you're annotating explicitly. Either way, the FIRST
+unsafe use of that value — not the declaration — is where the checker
+stops you.
+
+### Example
+
+See `examples/optionals/optionals.tsr` for a complete, runnable walkthrough
+of all three resolution forms plus optional interface fields; the file's
+trailing comment lists four one-line variants that are each, individually,
+a compile error, so you can see exactly what the checker rejects and why.
+
+### How it's implemented (for the curious)
+
+1. **Narrowing is a rewrite, not a separate type system.** `if (x != null) { ... }` is desugared, right after type inference, into a `let` under a fresh compiler-generated name (`x!` — a real unwrap — assigned inside the guarded region), and every reference to `x` inside that region is rewritten to the fresh name. Nothing downstream (codegen, the checker itself) needs to understand control-flow narrowing as a concept.
+2. **Rust backend**: `T?` is a real `Option<T>`; `??` compiles to `.clone().unwrap_or_else(|| fallback)`; `x == null` / `x != null` compile to `.is_none()` / `.is_some()`; a `return` of a definite value from a `T?`-returning function is auto-wrapped in `Some(...)`.
+3. **Cranelift backend**: `T?` and `T` share the exact same physical representation (no tagged union) — "missing" is an in-band sentinel chosen so real data can't produce it: a specific quiet-NaN bit pattern for `number?`, `2` for `boolean?` (valid booleans are only 0/1), and `0`/null-handle for `string?`/`array?`/`object?` (already means "no allocation" for every handle type anyway). `??` is a genuine short-circuit branch (the fallback is only evaluated when needed), not an eagerly-evaluated `select`. **Caveat**: this is a probabilistic, not proof-carrying, guarantee — unlike Rust's `Option<T>`, there's a (astronomically small) chance real data computes to exactly the sentinel bit pattern; accepted the same way niche-value optimizations generally are. `!` has no additional runtime check on this backend (the checker's static guarantee is what you're relying on).
 
 ## Shadowing, arrow functions, `switch`, and `try`/`catch` — design notes
 

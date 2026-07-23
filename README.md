@@ -112,6 +112,14 @@ backend yet.
   function return types (`function dbl(n: number) { return n * 2; }` infers
   `number`), inline arrow callbacks (`arr.map(x => x * 2)`). Explicit
   annotations always win.
+- **Null safety, enforced at compile time**: `T?` (optional types),
+  nullish coalescing (`x ?? fallback`), and control-flow narrowing
+  (`if (x != null) { ... }`, guard clauses). A `T?` value that reaches a
+  place expecting a guaranteed `T` — without `?? fallback`, a null check,
+  or an explicit `!` assertion — is a **compile error**, on both backends.
+  The `??` fallback must itself be non-optional ("two optionals" is
+  rejected too). See [`docs/language-reference.md`](docs/language-reference.md#null-safety)
+  and `examples/optionals/`.
 - `let` / `const` with optional type annotation
 - Primitive types: `string`, `number`, `boolean`, `void`
 - `function name(p: T, ...): T { ... }` with `return`
@@ -184,6 +192,7 @@ arcis run examples/<folder>/<file>.tsr
 | [`examples/input/`](examples/input/README.md)                   | `input.tsr`          | The `input()` builtin (reads one line of stdin)                                 |
 | [`examples/complete/`](examples/complete/README.md)             | `complete.tsr`       | A single-file kitchen-sink program that uses most features                       |
 | [`examples/mods/`](examples/mods/README.md)                     | `main.tsr` + `mate.tsr` + `texto.tsr` | Multi-module project with `import` / `export`        |
+| [`examples/optionals/`](examples/optionals/README.md)           | `optionals.tsr`      | Null safety: `T?`, `??`, narrowing, guard clauses, `!` — and what gets rejected |
 
 ## Modules
 

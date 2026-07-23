@@ -44,14 +44,43 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
     // for-of element types, function return types). Both backends receive
     // the same fully-annotated ASTs.
     let mut modules = arcis_codegen::resolve_program_types(&modules);
-    {
-        let mut env = arcis_validation::TypeEnv::default();
-        for m in &modules {
-            env.add_program(&m.program);
+    let mut env = arcis_validation::TypeEnv::default();
+    for m in &modules {
+        env.add_program(&m.program);
+    }
+    for m in &mut modules {
+        arcis_validation::infer_program(&mut m.program, &env);
+    }
+
+    // Null-safety: every optional (`T?`) value must be resolved (`??
+    // fallback`, a null-check guard, or `!`) before it reaches a place that
+    // expects a guaranteed value — enforced as a hard compile error, not a
+    // lint. `narrow_program` rewrites recognized guards
+    // (`if (x != null) { ... }`) into a freshly-named `let` plus a rename
+    // of every subsequent reference in scope (see `narrow.rs`'s doc comment
+    // for why it mints its own unique name instead of reusing
+    // `resolve_shadowing`).
+    for m in &mut modules {
+        arcis_validation::narrow_program(&mut m.program);
+    }
+    let mut null_issues = Vec::new();
+    for m in &modules {
+        for issue in arcis_validation::check_null_safety(&m.program, &env) {
+            null_issues.push(format!(
+                "{}:{}:{}: {}",
+                m.path.display(),
+                issue.line,
+                issue.col,
+                issue.message
+            ));
         }
-        for m in &mut modules {
-            arcis_validation::infer_program(&mut m.program, &env);
-        }
+    }
+    if !null_issues.is_empty() {
+        return Err(format!(
+            "null-safety error{}:\n{}",
+            if null_issues.len() == 1 { "" } else { "s" },
+            null_issues.join("\n")
+        ));
     }
 
     let bin_dir = PathBuf::from("bin");

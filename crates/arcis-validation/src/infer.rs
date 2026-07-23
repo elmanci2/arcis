@@ -107,6 +107,22 @@ impl TypeEnv {
             .insert(name.to_string(), t.clone());
         Some(t)
     }
+
+    /// The declared parameter types of a known top-level function, in
+    /// order. Used by the null-safety checker to validate call arguments
+    /// against their parameters. `None` for an unknown name (an import
+    /// whose target wasn't linked in, a builtin, …) — callers should treat
+    /// that permissively (no check), not as an error.
+    pub fn function_param_types(&self, name: &str) -> Option<Vec<Type>> {
+        Some(self.functions.get(name)?.params.iter().map(|p| p.ty.clone()).collect())
+    }
+
+    /// The (possibly lazily inferred) return type of a known top-level
+    /// function. Public wrapper around the private on-demand resolver, for
+    /// the null-safety checker's `return` sink.
+    pub fn resolved_return_type(&self, name: &str) -> Option<Type> {
+        self.return_type_of(name)
+    }
 }
 
 /// Flat name → type scope. Sound because shadowing was alpha-renamed away.
@@ -446,6 +462,11 @@ pub fn expr_type(e: &Expr, scope: &Scope, env: &TypeEnv) -> Option<Type> {
         Expr::Binary { op, left, right } => {
             use arcis_ast::BinOp::*;
             match op {
+                // `a ?? b`: the result is the fallback's (non-optional)
+                // type; fall back to the left side's inner type.
+                NullishCoalesce => expr_type(right, scope, env).or_else(|| {
+                    expr_type(left, scope, env).map(|t| t.unwrap_optional().clone())
+                }),
                 Add => {
                     let lt = expr_type(left, scope, env);
                     let rt = expr_type(right, scope, env);

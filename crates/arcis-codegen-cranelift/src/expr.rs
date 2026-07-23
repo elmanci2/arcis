@@ -463,6 +463,117 @@ pub(crate) fn emit_eq(
     }
 }
 
+/// `T?` shares its inner type's Cranelift representation (see
+/// `types::from_ast`'s doc comment); "missing" is encoded as an in-band
+/// sentinel value chosen so it can never arise from real data:
+/// - `Number` (F64): a specific quiet-NaN bit pattern.
+/// - `Boolean` (I8): `2` (valid booleans are only 0/1).
+/// - `String` / `Array` / `Object` (I64 handle): `0` (already means "no
+///   allocation" for every runtime handle type).
+/// - `Void`: degenerate case (an optional `void` isn't meaningful); treated
+///   as always-missing.
+///
+/// The null-safety checker (`arcis-validation`) guarantees a sentinel can
+/// never reach arithmetic/derefs unresolved, so the (astronomically small)
+/// risk of a real number computing to exactly that NaN bit pattern is an
+/// accepted trade-off, same class as niche-value optimizations generally.
+const NUMBER_NONE_BITS: i64 = 0x7FF8_0000_0000_00FEu64 as i64;
+
+fn null_sentinel(builder: &mut FunctionBuilder, ty: ArcisType) -> cranelift_codegen::ir::Value {
+    match ty {
+        ArcisType::Number => {
+            let bits = builder.ins().iconst(I64, NUMBER_NONE_BITS);
+            builder.ins().bitcast(F64, MemFlags::new(), bits)
+        }
+        ArcisType::Boolean => builder.ins().iconst(I8, 2),
+        ArcisType::String | ArcisType::Array | ArcisType::Object => builder.ins().iconst(I64, 0),
+        ArcisType::Void => builder.ins().iconst(I8, 1),
+    }
+}
+
+/// `true` (I8 1) if `val` (of representation `ty`) is the "missing" sentinel.
+fn emit_is_none(
+    builder: &mut FunctionBuilder,
+    val: cranelift_codegen::ir::Value,
+    ty: ArcisType,
+) -> cranelift_codegen::ir::Value {
+    match ty {
+        ArcisType::Number => {
+            let bits = builder.ins().bitcast(I64, MemFlags::new(), val);
+            let sentinel = builder.ins().iconst(I64, NUMBER_NONE_BITS);
+            builder.ins().icmp(IntCC::Equal, bits, sentinel)
+        }
+        ArcisType::Boolean => {
+            let sentinel = builder.ins().iconst(I8, 2);
+            builder.ins().icmp(IntCC::Equal, val, sentinel)
+        }
+        ArcisType::String | ArcisType::Array | ArcisType::Object => {
+            let zero = builder.ins().iconst(I64, 0);
+            builder.ins().icmp(IntCC::Equal, val, zero)
+        }
+        ArcisType::Void => builder.ins().iconst(I8, 1),
+    }
+}
+
+/// Coerce a freshly-emitted value into the representation expected by an
+/// optional slot (a `let`/param/return typed `T?`). A literal `null` /
+/// `undefined` emits as a dummy `ArcisType::Void` value (see `Expr::Null`
+/// below) with no meaningful bits — swap it for the real sentinel of the
+/// slot's ArcisType. Any other value already uses the same physical
+/// representation whether or not the slot is optional, so it passes through
+/// untouched.
+pub(crate) fn coerce_optional_slot(
+    builder: &mut FunctionBuilder,
+    val: cranelift_codegen::ir::Value,
+    val_ty: ArcisType,
+    slot_ty: ArcisType,
+) -> cranelift_codegen::ir::Value {
+    if val_ty == ArcisType::Void && slot_ty != ArcisType::Void {
+        null_sentinel(builder, slot_ty)
+    } else {
+        val
+    }
+}
+
+/// `a ?? b` — short-circuit: `b` is only evaluated when `a` is the "missing"
+/// sentinel. Modelled as a 3-block diamond (present / fallback / merge),
+/// the same shape `if`/`for` use elsewhere in this backend.
+fn emit_nullish_coalesce(
+    builder: &mut FunctionBuilder,
+    fctx: &mut FunctionCtx,
+    left: &Expr,
+    right: &Expr,
+    runtime: &Runtime,
+    user_fns: &HashMap<String, FnInfo>,
+    module: &mut ObjectModule,
+) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
+    let (lv, lt) = emit(builder, fctx, left, runtime, user_fns, module)?;
+    let none = emit_is_none(builder, lv, lt);
+
+    let present_block = builder.create_block();
+    let fallback_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let merge_param = builder.append_block_param(merge_block, lt.to_cl());
+
+    builder.ins().brif(none, fallback_block, &[], present_block, &[]);
+
+    builder.switch_to_block(present_block);
+    builder.seal_block(present_block);
+    builder.ins().jump(merge_block, &[lv]);
+
+    builder.switch_to_block(fallback_block);
+    builder.seal_block(fallback_block);
+    let (rv, rt) = emit(builder, fctx, right, runtime, user_fns, module)?;
+    // The checker guarantees `right` is a solid (non-optional) value of the
+    // same underlying type as `left`'s inner type, so `rv` already has the
+    // same Cranelift IR type as `merge_param` — no coercion needed.
+    builder.ins().jump(merge_block, &[rv]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    Ok((merge_param, rt))
+}
+
 fn emit_binary(
     builder: &mut FunctionBuilder,
     fctx: &mut FunctionCtx,
@@ -473,6 +584,28 @@ fn emit_binary(
     user_fns: &HashMap<String, FnInfo>,
     module: &mut ObjectModule,
 ) -> Result<(cranelift_codegen::ir::Value, ArcisType), String> {
+    // `??` needs short-circuit evaluation (skip `right` unless `left` is
+    // missing) — handled before the eager eval below.
+    if matches!(op, BinOp::NullishCoalesce) {
+        return emit_nullish_coalesce(builder, fctx, left, right, runtime, user_fns, module);
+    }
+    // `x == null` / `x != null` (either operand order): compare against the
+    // sentinel rather than trying to evaluate the `null` literal itself
+    // (which carries no meaningful bits on its own).
+    let is_null_lit = |e: &Expr| matches!(e, Expr::Null | Expr::Undefined);
+    if matches!(op, BinOp::EqEq | BinOp::NotEq) && (is_null_lit(left) ^ is_null_lit(right)) {
+        let value_expr = if is_null_lit(left) { right } else { left };
+        let (v, ty) = emit(builder, fctx, value_expr, runtime, user_fns, module)?;
+        let none = emit_is_none(builder, v, ty);
+        let result = if matches!(op, BinOp::EqEq) {
+            none
+        } else {
+            let one = builder.ins().iconst(I8, 1);
+            builder.ins().bxor(none, one)
+        };
+        return Ok((result, ArcisType::Boolean));
+    }
+
     let (lv, lt) = emit(builder, fctx, left, runtime, user_fns, module)?;
     let (rv, rt) = emit(builder, fctx, right, runtime, user_fns, module)?;
 
@@ -535,6 +668,9 @@ fn emit_binary(
             BinOp::And | BinOp::Or => {
                 return Err("`&&`/`||` on numbers is not meaningful; Phase 1 expects booleans".to_string());
             }
+            // Handled by the short-circuit dispatch at the top of
+            // `emit_binary`, before operands are eagerly evaluated.
+            BinOp::NullishCoalesce => unreachable!("`??` is intercepted before eager operand eval"),
         };
         return Ok((v, ty));
     }
@@ -611,6 +747,9 @@ fn emit_user_call(
                 arg_ty.name()
             ));
         }
+        // A bare `null`/`undefined` argument (ArcisType::Void) needs the
+        // real "missing" sentinel of the parameter's actual representation.
+        let v = coerce_optional_slot(builder, v, arg_ty, expected);
         arg_vals.push(v);
     }
     let func_id = fn_info.id;

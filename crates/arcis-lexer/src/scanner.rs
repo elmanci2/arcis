@@ -274,7 +274,14 @@ pub(crate) fn read_punct_or_op(lx: &mut Lexer) -> Result<TokenKind, LexError> {
                 TokenKind::Dot
             }
         }
-        '?' => TokenKind::Question,
+        '?' => {
+            if lx.peek_char() == Some('?') {
+                lx.advance();
+                TokenKind::QuestionQuestion
+            } else {
+                TokenKind::Question
+            }
+        }
         '=' => {
             if lx.peek_char() == Some('=') {
                 lx.advance();

@@ -128,7 +128,7 @@ impl Parser {
 
     /// Like [`parse_assign`](Self::parse_assign) but does not consume the
     /// trailing `;`. Used for the `update` slot of a C-style `for`.
-    pub(crate) fn parse_assign_no_semi(&mut self) -> Stmt {
+    pub(crate) fn parse_assign_no_semi(&mut self) -> Result<Stmt, ParseError> {
         let name_tok = self.advance();
         let name = match &name_tok.kind {
             TokenKind::Ident(s) => s.clone(),
@@ -137,15 +137,15 @@ impl Parser {
         // Detect indexed assignment: `name[expr] = expr`
         if self.check(&TokenKind::LBracket) {
             self.advance(); // [
-            let index = self.parse_expr().unwrap();
-            self.expect(&TokenKind::RBracket, "`]` in indexed assignment").unwrap();
-            self.expect(&TokenKind::Eq, "`=` in indexed assignment").unwrap();
-            let value = self.parse_expr().unwrap();
-            return Stmt::AssignIndex { object: name, index, value };
+            let index = self.parse_expr()?;
+            self.expect(&TokenKind::RBracket, "`]` in indexed assignment")?;
+            self.expect(&TokenKind::Eq, "`=` in indexed assignment")?;
+            let value = self.parse_expr()?;
+            return Ok(Stmt::AssignIndex { object: name, index, value });
         }
-        self.expect(&TokenKind::Eq, "`=` after name").unwrap();
-        let value = self.parse_expr().unwrap();
-        Stmt::Assign { name, value }
+        self.expect(&TokenKind::Eq, "`=` after name")?;
+        let value = self.parse_expr()?;
+        Ok(Stmt::Assign { name, value })
     }
 
     /// `let` / `const` declaration. `is_const` distinguishes the two.
@@ -302,7 +302,11 @@ impl Parser {
             let optional = self.matches(&TokenKind::Question);
             self.expect(&TokenKind::Colon, "`:` after field name")?;
             let field_ty = self.parse_type()?;
-            fields.push((key, Box::new(field_ty), optional));
+            // `field?: T` carries the same meaning as `field: T?` — fold the
+            // `?` marker into the type itself so the null-safety checker
+            // (which only looks at `Type::Optional`) sees it too.
+            let stored_ty = if optional { arcis_ast::Type::optional(field_ty) } else { field_ty };
+            fields.push((key, Box::new(stored_ty), optional));
             // `,` or `;` both separate fields; trailing separator is optional.
             let _ = self.matches(&TokenKind::Comma) || self.matches(&TokenKind::Semi);
         }
@@ -503,7 +507,7 @@ impl Parser {
             // Detect assignment the same way as parse_stmt but without `;`.
             let stmt = if let TokenKind::Ident(_) = self.peek_kind() {
                 if matches!(self.peek_at(1).map(|t| &t.kind), Some(TokenKind::Eq)) {
-                    self.parse_assign_no_semi()
+                    self.parse_assign_no_semi()?
                 } else {
                     let expr = self.parse_expr()?;
                     Stmt::Expr(expr)

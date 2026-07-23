@@ -309,6 +309,9 @@ pub enum ObjectField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     Add,
+    /// `a ?? b` — nullish coalescing: `a` when present, `b` otherwise.
+    /// The checker guarantees `b` is non-optional (a solid fallback).
+    NullishCoalesce,
     Sub,
     Mul,
     Div,
@@ -378,6 +381,11 @@ pub enum Type {
     /// A user-defined / named type (interface name, type alias name, or any
     /// identifier not recognised as a primitive keyword).
     Named(String),
+    /// `T?` — an optional value: either a `T` or `null`/`undefined`.
+    /// The null-safety checker forces every optional to be resolved
+    /// (`?? fallback`, an `if (x != null)` guard, or `!`) before use.
+    /// `A | null` / `A | undefined` normalize to `Optional(A)`.
+    Optional(Box<Type>),
     /// `(a: T, b: U) => R`
     Function {
         params: Vec<Type>,
@@ -403,6 +411,36 @@ impl Type {
     }
     pub fn array(inner: Type) -> Self {
         Type::Array(Box::new(inner))
+    }
+    pub fn optional(inner: Type) -> Self {
+        // Never nest optionals — `T??` adds no information over `T?`.
+        if inner.is_optional() {
+            inner
+        } else {
+            Type::Optional(Box::new(inner))
+        }
+    }
+
+    /// `true` for `T?` (and for the bare `null`/`undefined` types, which
+    /// behave as "always missing").
+    pub fn is_optional(&self) -> bool {
+        matches!(self, Type::Optional(_) | Type::Null | Type::Undefined)
+    }
+
+    /// The `T` of a `T?`; `None` for non-optional types.
+    pub fn optional_inner(&self) -> Option<&Type> {
+        match self {
+            Type::Optional(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Strip one level of `?` (identity for non-optionals).
+    pub fn unwrap_optional(&self) -> &Type {
+        match self {
+            Type::Optional(inner) => inner,
+            other => other,
+        }
     }
 
     /// `true` for the `T[]` shape (top-level only; does not recurse).
@@ -444,6 +482,7 @@ impl Type {
             Type::Array(inner) => inner.primitive_name(),
             Type::Null => "null",
             Type::Undefined => "undefined",
+            Type::Optional(inner) => inner.primitive_name(),
             Type::Union(_) => "union",
             Type::Intersection(_) => "intersection",
             Type::Literal(_) => "literal",
@@ -457,6 +496,7 @@ impl Type {
         match self {
             Type::Object { name, .. } => Some(name),
             Type::Array(inner) => inner.struct_name(),
+            Type::Optional(inner) => inner.struct_name(),
             _ => None,
         }
     }

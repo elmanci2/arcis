@@ -97,6 +97,7 @@ dependencies = [
  "arcis-lexer",
  "arcis-linker",
  "arcis-parser",
+ "arcis-validation",
 ]
 
 [[package]]

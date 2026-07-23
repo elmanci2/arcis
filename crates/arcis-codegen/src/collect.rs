@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use arcis_ast::{ExportDefault, Expr, Program, Stmt, Type};
+use arcis_ast::{ExportDefault, Expr, Function, Program, Stmt, Type};
 
 use arcis_linker::Module;
 
@@ -145,6 +145,124 @@ fn mark_ident_root_mutated(expr: &Expr, set: &mut HashSet<String>) {
 }
 
 // ── Type map ──────────────────────────────────────────────────────────────
+
+/// Flat name → full `Type` scope for the MODULE level only (`main`'s own
+/// statements for the root module; a non-root module's own top-level
+/// statements) — deliberately does NOT descend into any function's body.
+/// Unlike [`collect_types`] (which only stores a primitive-name string,
+/// for `.length` disambiguation), this keeps the whole `Type` so
+/// `arcis_validation::expr_type` can answer "is this expression optional?"
+/// genuinely — used by `Stmt::Return`'s auto-`Some(...)` wrapping and
+/// `Expr::NonNullAssertion`'s `.unwrap()` decision.
+///
+/// Each function gets its OWN independent scope via
+/// [`collect_function_type_scope`] instead of being folded into this one
+/// flat map — matching `arcis_validation::resolve_shadowing`'s "each
+/// function is its own scope tree" model (see that module's doc comment).
+/// Building one giant module-wide map here would let two DIFFERENT
+/// functions' same-named locals collide (last declaration wins for the
+/// whole module), silently mistyping an early function's binding once a
+/// later function reused its name — a real bug caught by
+/// `examples/optionals/optionals.tsr` during development (`findById`'s
+/// non-optional loop variable `p` was mistyped as `Product?`` because a
+/// later, unrelated function also happened to declare a `let p: Product?`).
+pub(crate) fn collect_type_scope(program: &Program) -> HashMap<String, Type> {
+    let mut map = HashMap::new();
+    for stmt in &program.stmts {
+        collect_type_scope_stmt(stmt, &mut map, false);
+    }
+    map
+}
+
+/// Flat name → full `Type` scope for one function's own parameters and
+/// body (only). Merge this OVER a clone of the module-level scope (see
+/// [`collect_type_scope`]) to get the full scope visible inside that
+/// function's body.
+pub(crate) fn collect_function_type_scope(f: &Function) -> HashMap<String, Type> {
+    let mut map = HashMap::new();
+    for p in &f.params {
+        map.insert(p.name.clone(), p.ty.clone());
+    }
+    for s in &f.body {
+        collect_type_scope_stmt(s, &mut map, true);
+    }
+    map
+}
+
+/// `descend_into_functions`: `false` when walking at module level (a
+/// `Stmt::Function` is registered as opaque — see [`collect_type_scope`]'s
+/// doc comment for why); `true` when walking a single function's own body
+/// (used by [`collect_function_type_scope`] — a NESTED function
+/// declaration inside it still gets its params registered so calls to it
+/// can be typed, matching this module's other collectors' existing
+/// behavior for nested declarations).
+fn collect_type_scope_stmt(stmt: &Stmt, map: &mut HashMap<String, Type>, descend_into_functions: bool) {
+    match stmt {
+        Stmt::Let { name, ty: Some(t), .. } | Stmt::Const { name, ty: Some(t), .. } => {
+            map.insert(name.clone(), t.clone());
+        }
+        Stmt::ForOf { name, ty, body, .. } => {
+            if let Some(t) = ty {
+                map.insert(name.clone(), t.clone());
+            }
+            for s in body {
+                collect_type_scope_stmt(s, map, descend_into_functions);
+            }
+        }
+        Stmt::Function(f) => {
+            if descend_into_functions {
+                for p in &f.params {
+                    map.insert(p.name.clone(), p.ty.clone());
+                }
+                for s in &f.body {
+                    collect_type_scope_stmt(s, map, descend_into_functions);
+                }
+            }
+        }
+        Stmt::If { then_branch, else_branch, .. } => {
+            for s in then_branch {
+                collect_type_scope_stmt(s, map, descend_into_functions);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    collect_type_scope_stmt(s, map, descend_into_functions);
+                }
+            }
+        }
+        Stmt::While { body, .. } | Stmt::For { body, .. } => {
+            for s in body {
+                collect_type_scope_stmt(s, map, descend_into_functions);
+            }
+        }
+        Stmt::Switch { cases, .. } => {
+            for c in cases {
+                for s in &c.body {
+                    collect_type_scope_stmt(s, map, descend_into_functions);
+                }
+            }
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                collect_type_scope_stmt(s, map, descend_into_functions);
+            }
+            for s in catch_body {
+                collect_type_scope_stmt(s, map, descend_into_functions);
+            }
+        }
+        Stmt::ExportDecl(inner) => collect_type_scope_stmt(inner, map, descend_into_functions),
+        Stmt::ExportDefault(ExportDefault::Function(f)) => {
+            if descend_into_functions {
+                for p in &f.params {
+                    map.insert(p.name.clone(), p.ty.clone());
+                }
+                for s in &f.body {
+                    collect_type_scope_stmt(s, map, descend_into_functions);
+                }
+            }
+        }
+        _ => {}
+    }
+}
 
 /// Build a name → declared type map. Used for `.length` to distinguish
 /// between `string` and an array when the object is an identifier.

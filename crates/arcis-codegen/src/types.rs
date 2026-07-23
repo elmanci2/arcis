@@ -59,6 +59,7 @@ pub(crate) fn ts_type_to_rust(ty: &Type, is_root: bool) -> String {
             .map(|m| ts_type_to_rust(m, is_root))
             .unwrap_or_else(|| "()".to_string()),
         Type::Named(name) => name.clone(),
+        Type::Optional(inner) => format!("Option<{}>", ts_type_to_rust(inner, is_root)),
         Type::Function { params, return_type } => {
             let ps: Vec<String> = params.iter().map(|p| ts_type_to_rust(p, is_root)).collect();
             format!("fn({}) -> {}", ps.join(", "), ts_type_to_rust(return_type, is_root))
@@ -123,7 +124,10 @@ pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
         out.push_str("    pub ");
         out.push_str(k);
         out.push_str(": ");
-        if *optional {
+        // The parser already folds `field?: T` into `Type::Optional(T)`
+        // (see `parse_interface`/`parse_object_type`), so `ts_type_to_rust`
+        // alone produces `Option<T>` — wrapping again here would double it.
+        if *optional && !fty.is_optional() {
             out.push_str(&format!("Option<{}>", ts_type_to_rust(fty, true)));
         } else {
             out.push_str(&ts_type_to_rust(fty, true));

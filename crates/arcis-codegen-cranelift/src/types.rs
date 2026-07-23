@@ -74,6 +74,13 @@ pub(crate) fn from_ast(ty: &AstType, enum_names: &std::collections::HashSet<Stri
         }
     }
     match ty {
+        // `T?` shares its inner type's machine representation — "missing"
+        // is an in-band sentinel (see `expr::null_sentinel`): handle 0 for
+        // string/array/object, a canonical NaN payload for number, 2 for
+        // boolean. The null-safety checker guarantees optionals are
+        // resolved before any typed operation, so the sentinel can never
+        // leak into arithmetic/derefs.
+        AstType::Optional(inner) => from_ast(inner, enum_names),
         // `T[]` becomes ArcisType::Array regardless of the inner type.
         // The inner type is stored in the Type AST node but the runtime
         // stores everything as i64 handles anyway.

@@ -1,0 +1,83 @@
+// optionals.tsr — null-safety: `T?`, `??`, narrowing, and `!`.
+//
+// The core guarantee: a value typed `T?` (may be missing) can never reach
+// a place that expects a guaranteed `T` without being resolved first. If
+// you skip that step, the program does not compile — see
+// `docs/language-reference.md`'s "Null safety" section for the full rule
+// list and every rejected example.
+
+interface Product {
+    name: string;
+    price: number;
+    id: number;
+}
+
+function findById(catalog: Product[], id: number): Product? {
+    for (let p of catalog) {
+        if (p.id == id) {
+            return p;
+        }
+    }
+    return null;
+}
+
+let catalog: Product[] = [
+    { name: "Laptop", price: 1000, id: 1 },
+    { name: "Mouse", price: 25, id: 2 }
+];
+
+// 1. `?? fallback` — the fallback itself must be a guaranteed value (never
+//    another optional): that's what keeps the guarantee real.
+let backup: Product = { name: "N/A", price: 0, id: -1 };
+let a: Product = findById(catalog, 1) ?? backup;
+print("?? -> " + a.name);
+
+// 2. Narrowing: `if (x != null) { ... }` proves `x` is present for the
+//    rest of that block — use it directly, no unwrapping needed.
+let maybe: Product? = findById(catalog, 99);
+if (maybe != null) {
+    print("found: " + maybe.name);
+} else {
+    print("narrowing -> not found");
+}
+
+// 3. Guard-clause idiom: `if (x == null) { return; }` narrows `x` for
+//    every statement AFTER the guard, in the same function.
+function describe(catalog2: Product[], id: number): string {
+    let p: Product? = findById(catalog2, id);
+    if (p == null) {
+        return "missing";
+    }
+    return p.name + " ($" + p.price + ")";
+}
+print("guard clause -> " + describe(catalog, 2));
+print("guard clause -> " + describe(catalog, 999));
+
+// 4. `!` — an explicit, deliberate assertion ("I already know this is
+//    present"). Use it when you're certain; a wrong assertion still fails
+//    loudly at runtime instead of silently corrupting a value.
+let sure: Product = findById(catalog, 1)!;
+print("! -> " + sure.name);
+
+// 5. Optional fields on an interface (`nickname?: string`) work exactly
+//    like a `T?` annotation — the same rules apply.
+interface Person {
+    name: string;
+    nickname?: string;
+}
+let people: Person[] = [
+    { name: "Ana", nickname: "An" },
+    { name: "Beto" }
+];
+for (let person of people) {
+    print(person.name + ": " + (person.nickname ?? "(no nickname)"));
+}
+
+// The lines below, if uncommented, are each a compile error — every one
+// is a value that might be missing reaching a place that needs a
+// guarantee, with no `?? fallback`, guard, or `!` in sight:
+//
+//   let bad1: Product = findById(catalog, 1);                  // unresolved optional
+//   let bad2: number = null;                                    // null into non-optional
+//   let bad3: Product = findById(catalog, 1) ?? findById(catalog, 2); // fallback is ALSO optional
+//   print(findById(catalog, 1).name);                            // member access on optional

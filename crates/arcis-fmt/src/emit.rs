@@ -421,6 +421,7 @@ fn token_text(kind: &TokenKind) -> String {
         Ampersand => "&".into(),
         FatArrow => "=>".into(),
         Question => "?".into(),
+        QuestionQuestion => "??".into(),
         Ident(s) => s.clone(),
         Number(n) => format_number(*n),
         String(s) => format!("\"{}\"", escape_string(s)),

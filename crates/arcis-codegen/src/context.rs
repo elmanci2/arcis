@@ -33,4 +33,14 @@ pub(crate) struct Ctx<'a> {
     /// `import utils as u;` / `import * as u from "utils";`). Used by
     /// `emit_member` to emit `u::item` instead of `u.item`.
     pub namespace_names: &'a HashSet<String>,
+    /// Cross-module function/const type facts (same [`arcis_validation::TypeEnv`]
+    /// the driver used for inference and the null-safety checker).
+    pub env: &'a arcis_validation::TypeEnv,
+    /// Flat name → `Type` scope for this module's own locals/params (see
+    /// `collect::collect_type_scope`). Paired with `env`, lets codegen ask
+    /// `arcis_validation::expr_type` whether an arbitrary expression
+    /// (not just a bare identifier) is optional — used to auto-wrap a
+    /// `return`ed definite value in `Some(...)` when the function's return
+    /// type is `T?`, and to `.unwrap()` a call result under `!`.
+    pub type_scope: &'a HashMap<String, Type>,
 }

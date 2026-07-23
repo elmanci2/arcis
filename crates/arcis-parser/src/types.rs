@@ -34,6 +34,10 @@ impl Parser {
     }
 
     /// `intersection ( "|" intersection )*`
+    ///
+    /// Unions with `null` / `undefined` members normalize to
+    /// `Optional(rest)` — `string | null` IS `string?`, so the null-safety
+    /// checker only ever has to reason about one optional shape.
     fn parse_union_type(&mut self) -> Result<Type, ParseError> {
         // Allow a leading `|` before the first member (TS permits this to
         // make multi-line union declarations easier to format).
@@ -46,7 +50,16 @@ impl Parser {
         while self.matches(&TokenKind::Bar) {
             members.push(self.parse_intersection_type()?);
         }
-        Ok(Type::Union(members))
+        let had_null = members
+            .iter()
+            .any(|m| matches!(m, Type::Null | Type::Undefined));
+        members.retain(|m| !matches!(m, Type::Null | Type::Undefined));
+        let base = match members.len() {
+            0 => Type::Null,
+            1 => members.into_iter().next().unwrap(),
+            _ => Type::Union(members),
+        };
+        Ok(if had_null { Type::optional(base) } else { base })
     }
 
     /// `postfix_type ( "&" postfix_type )*`
@@ -62,14 +75,25 @@ impl Parser {
         Ok(Type::Intersection(members))
     }
 
-    /// `primary_type ( "[" "]" )*` — repeated `[]` suffixes build nested
-    /// `Type::Array`.
+    /// `primary_type ( "[" "]" )* "?"?` — repeated `[]` suffixes build
+    /// nested `Type::Array`; a trailing `?` makes the type optional.
     fn parse_postfix_type(&mut self) -> Result<Type, ParseError> {
         let mut ty = self.parse_primary_type()?;
         while self.check(&TokenKind::LBracket) {
             self.advance();
             self.expect(&TokenKind::RBracket, "`]` after `[`")?;
             ty = Type::Array(Box::new(ty));
+        }
+        if self.check(&TokenKind::QuestionQuestion) {
+            let t = self.peek();
+            return Err(ParseError {
+                line: t.line,
+                col: t.col,
+                msg: "`T??` is not a type — one `?` already covers \"may be missing\"".to_string(),
+            });
+        }
+        if self.matches(&TokenKind::Question) {
+            ty = Type::optional(ty);
         }
         Ok(ty)
     }
@@ -144,7 +168,10 @@ impl Parser {
                 let optional = self.matches(&TokenKind::Question);
                 self.expect(&TokenKind::Colon, "`:` after field name")?;
                 let field_ty = self.parse_type()?;
-                fields.push((key, Box::new(field_ty), optional));
+                // `field?: T` == `field: T?` — see the matching comment in
+                // `stmt.rs::parse_interface`.
+                let stored_ty = if optional { Type::optional(field_ty) } else { field_ty };
+                fields.push((key, Box::new(stored_ty), optional));
                 // `,` or `;` both separate fields (TS allows either).
                 if !self.matches(&TokenKind::Comma) && !self.matches(&TokenKind::Semi) {
                     break;

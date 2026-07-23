@@ -484,13 +484,9 @@ fn describe_interface(extends: &[String], fields: &[(String, Box<Type>, bool)]) 
     };
     let fs: Vec<String> = fields
         .iter()
-        .map(|(n, t, opt)| {
-            if *opt {
-                format!("{n}?: {}", type_label(t))
-            } else {
-                format!("{n}: {}", type_label(t))
-            }
-        })
+        // The `?` is already folded into `t` (`Type::Optional`), so
+        // `type_label` alone renders `n: T?` — no separate marker needed.
+        .map(|(n, t, _opt)| format!("{n}: {}", type_label(t)))
         .collect();
     format!("interface{ext} {{ {} }}", fs.join(", "))
 }
@@ -513,6 +509,7 @@ fn resolve_enum_variants(variants: &[(String, Option<i64>)]) -> Vec<(String, i64
 pub fn type_label(ty: &Type) -> String {
     use arcis_ast::LiteralValue;
     match ty {
+        Type::Optional(inner) => format!("{}?", type_label(inner)),
         Type::Array(inner) => format!("{}[]", type_label(inner)),
         Type::Object { fields, .. } => {
             let fields: Vec<String> = fields

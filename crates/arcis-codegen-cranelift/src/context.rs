@@ -100,6 +100,14 @@ pub(crate) struct FunctionCtx {
     /// call results). Last-write-wins on cross-interface collisions — only
     /// consulted when the alternative is a silent f64 reinterpretation.
     pub(crate) global_field_types: HashMap<String, ArcisType>,
+    /// The enclosing function's declared return representation. `Stmt::Return`
+    /// needs this to coerce a literal `null`/`undefined` (which emits as a
+    /// dummy `ArcisType::Void` value with no meaningful bits) into the real
+    /// "missing" sentinel of the function's ACTUAL Cranelift return type —
+    /// returning the raw dummy value would otherwise produce a return value
+    /// of the wrong Cranelift IR type (verifier error) whenever the return
+    /// type isn't itself `Void`.
+    pub(crate) return_ty: ArcisType,
 }
 
 impl FunctionCtx {
@@ -121,6 +129,7 @@ impl FunctionCtx {
             open_try_count: 0,
             global_consts: HashMap::new(),
             global_field_types: HashMap::new(),
+            return_ty: ArcisType::Void,
         }
     }
 

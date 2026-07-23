@@ -35,13 +35,34 @@ pub(crate) fn emit(out: &mut String, expr: &Expr, ctx: &Ctx) {
             let type_name = infer_type_name(operand, ctx);
             out.push_str(&crate::types::rust_string_literal(type_name));
         }
-        Expr::Null | Expr::Undefined => out.push_str("()"),
+        // The null-safety checker only lets `null` / `undefined` flow into
+        // optional (`Option<T>`) positions.
+        Expr::Null | Expr::Undefined => out.push_str("None"),
         // Type assertions (`as Type`, `as const`) and the non-null assertion
         // (`!`) are compile-time-only in TypeScript — they have no runtime
         // effect. Arcis mirrors that: emit just the inner expression.
         Expr::AsAssertion { expr, .. } => emit(out, expr, ctx),
         Expr::AsConst(inner) => emit(out, inner, ctx),
-        Expr::NonNullAssertion(inner) => emit(out, inner, ctx),
+        // `x!` — asserts `x` is present. For a genuinely `Option<T>`-typed
+        // expression this must be a REAL `.unwrap()` (the whole point of a
+        // sentinel-free `Option<T>` representation is that there is no
+        // other way to get a `T` back out); for anything else (already
+        // non-optional) it stays a pass-through, matching `as`/`as
+        // const`'s compile-time-only semantics. `arcis_validation::expr_type`
+        // (not just a by-name lookup) so this also covers `f()!` /
+        // `obj.field!`, not only a bare optional identifier.
+        Expr::NonNullAssertion(inner) => {
+            let unwraps = arcis_validation::expr_type(inner, ctx.type_scope, ctx.env)
+                .map(|t| t.is_optional())
+                .unwrap_or(false);
+            if unwraps {
+                out.push('(');
+                emit(out, inner, ctx);
+                out.push_str(").clone().unwrap()");
+            } else {
+                emit(out, inner, ctx);
+            }
+        }
         Expr::Arrow { params, return_type, body } => {
             emit_arrow(out, params, return_type.as_ref(), body, ctx)
         }
@@ -307,7 +328,24 @@ fn emit_object_literal(out: &mut String, fields: &[ObjectField], ctx: &Ctx) {
 // ── Binary operators ──────────────────────────────────────────────────────
 
 fn emit_binary(out: &mut String, op: BinOp, left: &Expr, right: &Expr, ctx: &Ctx) {
+    // Null tests: `x == null` → `.is_none()`, `x != null` → `.is_some()`.
+    let null_side = |e: &Expr| matches!(e, Expr::Null | Expr::Undefined);
+    if matches!(op, BinOp::EqEq | BinOp::NotEq) && (null_side(left) ^ null_side(right)) {
+        let value = if null_side(left) { right } else { left };
+        out.push('(');
+        emit(out, value, ctx);
+        out.push_str(if matches!(op, BinOp::EqEq) { ").is_none()" } else { ").is_some()" });
+        return;
+    }
     match op {
+        BinOp::NullishCoalesce => {
+            // `a ?? b` — the checker guarantees `b` is a solid fallback.
+            out.push('(');
+            emit(out, left, ctx);
+            out.push_str(").clone().unwrap_or_else(|| ");
+            emit(out, right, ctx);
+            out.push(')');
+        }
         BinOp::Add => {
             // Heuristic: if either operand is a string literal, emit `format!`.
             if crate::builtin::has_string_literal(left) || crate::builtin::has_string_literal(right)

@@ -37,10 +37,11 @@ pub(crate) fn emit_function(
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
+    let enum_names: std::collections::HashSet<String> = enums.keys().cloned().collect();
     let mut fctx = FunctionCtx::new(reassigned, enums);
     fctx.global_consts = global_consts.clone();
     fctx.global_field_types = global_field_types.clone();
-    let enum_names: std::collections::HashSet<String> = enums.keys().cloned().collect();
+    fctx.return_ty = from_ast(&f.return_type, &enum_names).unwrap_or(ArcisType::Void);
 
     // Bind each Arcis parameter to a Cranelift variable populated from the
     // entry block's parameters.

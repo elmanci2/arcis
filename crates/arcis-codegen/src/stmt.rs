@@ -116,6 +116,8 @@ fn emit_let(
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
         namespace_names: ctx.namespace_names,
+        env: ctx.env,
+        type_scope: ctx.type_scope,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -157,6 +159,8 @@ fn emit_const(
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
         namespace_names: ctx.namespace_names,
+        env: ctx.env,
+        type_scope: ctx.type_scope,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -225,8 +229,28 @@ fn emit_return(
             is_root: ctx.is_root,
             enum_names: ctx.enum_names,
             namespace_names: ctx.namespace_names,
+                env: ctx.env,
+            type_scope: ctx.type_scope,
         };
-        crate::expr::emit(out, e, &nested);
+        // `return` a genuinely definite value where the function's return
+        // type is `T?` (`Option<T>` in Rust) — wrap it. A value that's
+        // ALREADY optional (an `Option<T>`-typed ident, another call
+        // returning `T?`, …) is passed straight through unchanged.
+        let target_is_optional = ctx.current_return_type.map(|t| t.is_optional()).unwrap_or(false);
+        // `return null;` already emits a bare `None` (see `Expr::Null`'s
+        // own codegen) — must NOT also get `Some(...)`-wrapped.
+        let is_null_lit = matches!(e, arcis_ast::Expr::Null | arcis_ast::Expr::Undefined);
+        let value_is_optional = is_null_lit
+            || arcis_validation::expr_type(e, ctx.type_scope, ctx.env)
+                .map(|t| t.is_optional())
+                .unwrap_or(false);
+        if target_is_optional && !value_is_optional {
+            out.push_str("Some(");
+            crate::expr::emit(out, e, &nested);
+            out.push(')');
+        } else {
+            crate::expr::emit(out, e, &nested);
+        }
     }
     out.push_str(";\n");
 }

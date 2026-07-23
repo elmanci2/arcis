@@ -93,6 +93,8 @@ pub enum TokenKind {
     FatArrow,
     /// `?` — optional property / non-null narrowing marker.
     Question,
+    /// `??` — nullish coalescing.
+    QuestionQuestion,
 
     // ── Punctuation ────────────────────────────────────────────────────────
     LParen,
@@ -214,6 +216,7 @@ impl fmt::Display for TokenKind {
             Self::Ampersand => write!(f, "`&`"),
             Self::FatArrow => write!(f, "`=>`"),
             Self::Question => write!(f, "`?`"),
+            Self::QuestionQuestion => write!(f, "`??`"),
             Self::LParen => write!(f, "`(`"),
             Self::RParen => write!(f, "`)`"),
             Self::LBrace => write!(f, "`{{`"),

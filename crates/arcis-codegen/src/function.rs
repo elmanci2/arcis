@@ -27,6 +27,13 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
     out.push_str(" -> ");
     out.push_str(&crate::types::ts_type_to_rust(&f.return_type, ctx.is_root));
     out.push_str(" {\n");
+    // This function's own params/locals, layered over the module-level
+    // scope — kept separate per function (not one flat module-wide map)
+    // so two unrelated functions with a same-named local never collide.
+    // See `collect::collect_type_scope`'s doc comment for the bug this
+    // fixes.
+    let mut merged_scope = ctx.type_scope.clone();
+    merged_scope.extend(crate::collect::collect_function_type_scope(f));
     // The body runs with the function's return type set on the Ctx so
     // `return { ... };` can resolve inline object literals against the
     // declared shape.
@@ -38,6 +45,8 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
         is_root: ctx.is_root,
         enum_names: ctx.enum_names,
         namespace_names: ctx.namespace_names,
+        env: ctx.env,
+        type_scope: &merged_scope,
     };
     for stmt in &f.body {
         crate::stmt::emit(out, stmt, 1, &body_ctx);

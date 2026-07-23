@@ -175,6 +175,16 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
         .map(|m| (m.path.clone(), m.id.clone()))
         .collect();
 
+    // Cross-module function/const type facts — lets codegen genuinely ask
+    // "is this expression optional?" (via `arcis_validation::expr_type`)
+    // instead of pattern-matching Expr shapes: `return`s an auto-`Some(...)`
+    // wrap when the target is `T?` but the value is definite, and `x!`
+    // emits a real `.unwrap()` when `x` is `Option<T>`-typed.
+    let mut env = arcis_validation::TypeEnv::default();
+    for m in modules {
+        env.add_program(&m.program);
+    }
+
     let mut out = Vec::with_capacity(modules.len());
     for (i, m) in modules.iter().enumerate() {
         let is_root = i == 0;
@@ -187,6 +197,7 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
             &enum_names,
             &type_level_names,
             &path_to_id,
+            &env,
         )?;
         out.push((m.id.clone(), src));
     }

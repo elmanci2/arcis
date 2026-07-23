@@ -32,11 +32,15 @@ use arcis_ast::Program;
 mod duplicate;
 pub mod infer;
 mod loop_ctx;
+pub mod narrow;
+pub mod nullsafety;
 mod shadowing;
 mod unused;
 
 pub use duplicate::DuplicateDecl;
 pub use infer::{expr_type, infer_program, TypeEnv};
+pub use narrow::narrow_program;
+pub use nullsafety::{check_null_safety, NullSafetyIssue};
 pub use shadowing::resolve_shadowing;
 pub use unused::UnusedDecl;
 

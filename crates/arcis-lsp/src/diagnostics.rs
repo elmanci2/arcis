@@ -8,9 +8,16 @@
 //! 3. `arcis_validation::validate` — unused variables (warning),
 //!    duplicate declarations and `break`/`continue` outside a loop
 //!    (errors), each anchored at its declaration's line/col.
+//! 4. Type inference + null-safety — same guarantee the compiler enforces
+//!    (every `T?` must be resolved with `?? fallback`, a null check, or
+//!    `!` before reaching a place that expects a `T`), surfaced live in the
+//!    editor rather than only at `arcis build`. Single-document only (the
+//!    LSP doesn't resolve cross-file imports), so a name defined in
+//!    another module of the same project won't be seen here — that still
+//!    gets a definitive answer at build time.
 
 use arcis_parser::ParseError;
-use arcis_validation::ValidationIssue;
+use arcis_validation::{NullSafetyIssue, ValidationIssue};
 use crate::lsp::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 /// Run the diagnostic pipeline against `text` and return every
@@ -32,16 +39,30 @@ pub fn diagnostics_for(text: &str) -> Vec<Diagnostic> {
     };
 
     // 2. Parse
-    let program = match arcis_parser::parse(tokens) {
+    let mut program = match arcis_parser::parse(tokens) {
         Ok(program) => program,
         Err(e) => return vec![from_parse(e)],
     };
 
     // 3. Validate
-    arcis_validation::validate(&program)
+    let mut out: Vec<Diagnostic> = arcis_validation::validate(&program)
         .into_iter()
         .map(from_validation)
-        .collect()
+        .collect();
+
+    // 4. Type inference + null-safety, mirroring the compiler's own
+    // pipeline (see `arcis-driver/src/build.rs`) for this one document.
+    let mut env = arcis_validation::TypeEnv::default();
+    env.add_program(&program);
+    arcis_validation::infer_program(&mut program, &env);
+    arcis_validation::narrow_program(&mut program);
+    out.extend(
+        arcis_validation::check_null_safety(&program, &env)
+            .into_iter()
+            .map(from_null_safety),
+    );
+
+    out
 }
 
 fn from_validation(issue: ValidationIssue) -> Diagnostic {
@@ -87,6 +108,29 @@ fn from_validation(issue: ValidationIssue) -> Diagnostic {
         severity: Some(severity),
         source: Some("arcis-lsp".into()),
         message,
+        ..Default::default()
+    }
+}
+
+fn from_null_safety(issue: NullSafetyIssue) -> Diagnostic {
+    // Many null-safety errors anchor on an expression deep inside a
+    // statement; `Expr` carries no span in this AST, so `line`/`col` fall
+    // back to `(0, 0)` (top of file) when nothing more precise is known —
+    // still surfaces the issue with its self-descriptive message, just
+    // without a tight underline.
+    let line = issue.line.saturating_sub(1) as u32;
+    let character = issue.col.saturating_sub(1) as u32;
+    Diagnostic {
+        range: Range {
+            start: Position { line, character },
+            end: Position {
+                line,
+                character: character.saturating_add(1),
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("arcis-lsp".into()),
+        message: issue.message,
         ..Default::default()
     }
 }

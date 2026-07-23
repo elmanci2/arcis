@@ -10,6 +10,7 @@ description = "Arcis code generator: AST → Rust source."
 [dependencies]
 arcis-ast = { workspace = true }
 arcis-linker = { workspace = true }
+arcis-validation = { workspace = true }
 
 [dev-dependencies]
 # Needed by `tests/codegen.rs`: lex + parse a snippet, then generate Rust.

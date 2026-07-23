@@ -83,7 +83,25 @@ impl Parser {
 
     /// Top-level expression entry point.
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_or()
+        self.parse_nullish()
+    }
+
+    /// `or ( "??" or )*` — nullish coalescing binds loosest, so
+    /// `a ?? b || c` reads as `a ?? (b || c)`. The null-safety checker
+    /// enforces that the right-hand side is a guaranteed (non-optional)
+    /// fallback.
+    fn parse_nullish(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_or()?;
+        while self.check(&TokenKind::QuestionQuestion) {
+            self.advance();
+            let right = self.parse_or()?;
+            left = Expr::Binary {
+                op: BinOp::NullishCoalesce,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {

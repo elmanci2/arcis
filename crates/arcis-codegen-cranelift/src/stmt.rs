@@ -60,6 +60,9 @@ pub(crate) fn emit_stmt(
                 Some(t) if !is_any => from_ast(t, fctx.enum_names())?,
                 _ => inferred_ty,
             };
+            // `let x: T? = null;` — the literal has no meaningful bits of
+            // its own; swap it for `resolved`'s real "missing" sentinel.
+            let v = crate::expr::coerce_optional_slot(builder, v, inferred_ty, resolved);
             fctx.define(name, resolved, v, builder);
             // Track element type for array bindings and field types for objects.
             if let Some(t) = ty {
@@ -153,8 +156,8 @@ pub(crate) fn emit_stmt(
             // `arcis_try_depth` doesn't leak past this call.
             let v = match value {
                 Some(e) => {
-                    let (v, _) = expr::emit(builder, fctx, e, runtime, user_fns, module)?;
-                    Some(v)
+                    let (v, val_ty) = expr::emit(builder, fctx, e, runtime, user_fns, module)?;
+                    Some(crate::expr::coerce_optional_slot(builder, v, val_ty, fctx.return_ty))
                 }
                 None => None,
             };

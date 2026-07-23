@@ -393,6 +393,21 @@ fn collect_local_defs(stmt: &Stmt, defs: &mut Vec<LocalDef>) {
                 collect_local_defs(s, defs);
             }
         }
+        Stmt::Switch { cases, .. } => {
+            for case in cases {
+                for s in &case.body {
+                    collect_local_defs(s, defs);
+                }
+            }
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                collect_local_defs(s, defs);
+            }
+            for s in catch_body {
+                collect_local_defs(s, defs);
+            }
+        }
         Stmt::For { init, body, .. } => {
             if let Some(init_stmt) = init {
                 collect_local_defs(init_stmt, defs);
@@ -400,6 +415,15 @@ fn collect_local_defs(stmt: &Stmt, defs: &mut Vec<LocalDef>) {
             for s in body {
                 collect_local_defs(s, defs);
             }
+        }
+
+        // ── enum ──────────────────────────────────────────────────
+        Stmt::Enum { name, variants, .. } => {
+            defs.push(LocalDef {
+                name: name.clone(),
+                kind: CompletionItemKind::VARIABLE,
+                detail: format!("enum {{ {} }}", variants.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>().join(", ")),
+            });
         }
 
         // ── leaves ────────────────────────────────────────────────
@@ -410,23 +434,43 @@ fn collect_local_defs(stmt: &Stmt, defs: &mut Vec<LocalDef>) {
         | Stmt::Break
         | Stmt::Continue
         | Stmt::Expr(_)
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. }
+        | Stmt::Throw(_)
         | Stmt::FromImport { wildcard: true, .. } => {}
     }
 }
 
 /// Human-readable label for a type annotation.
 fn type_label(ty: &arcis_ast::Type) -> String {
-    if ty.is_array {
-        format!("{}[]", ty.name)
-    } else if ty.fields.is_empty() {
-        ty.name.clone()
-    } else {
-        let fields: Vec<String> = ty
-            .fields
-            .iter()
-            .map(|(n, t)| format!("{n}: {}", type_label(t)))
-            .collect();
-        format!("{{ {} }}", fields.join(", "))
+    use arcis_ast::{LiteralValue, Type};
+    match ty {
+        Type::Array(inner) => format!("{}[]", type_label(inner)),
+        Type::Object { fields, .. } => {
+            let fields: Vec<String> = fields
+                .iter()
+                .map(|(n, t, opt)| {
+                    if *opt {
+                        format!("{n}?: {}", type_label(t))
+                    } else {
+                        format!("{n}: {}", type_label(t))
+                    }
+                })
+                .collect();
+            format!("{{ {} }}", fields.join(", "))
+        }
+        Type::Primitive(name) | Type::Named(name) => name.clone(),
+        Type::Null => "null".to_string(),
+        Type::Undefined => "undefined".to_string(),
+        Type::Union(members) => members.iter().map(type_label).collect::<Vec<_>>().join(" | "),
+        Type::Intersection(members) => members.iter().map(type_label).collect::<Vec<_>>().join(" & "),
+        Type::Literal(LiteralValue::String(s)) => format!("\"{s}\""),
+        Type::Literal(LiteralValue::Number(n)) => format!("{n}"),
+        Type::Literal(LiteralValue::Bool(b)) => format!("{b}"),
+        Type::Function { params, return_type } => {
+            let ps: Vec<String> = params.iter().map(type_label).collect();
+            format!("({}) => {}", ps.join(", "), type_label(return_type))
+        }
     }
 }
 

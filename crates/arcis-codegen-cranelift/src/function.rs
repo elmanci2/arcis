@@ -27,6 +27,7 @@ pub(crate) fn emit_function(
     user_fns: &HashMap<String, FnInfo>,
     runtime: &Runtime,
     reassigned: &HashSet<String>,
+    enums: &HashMap<String, HashMap<String, f64>>,
     module: &mut ObjectModule,
 ) -> Result<(), String> {
     let mut builder_ctx = FunctionBuilderContext::new();
@@ -34,13 +35,13 @@ pub(crate) fn emit_function(
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
-    let mut fctx = FunctionCtx::new(reassigned);
+    let mut fctx = FunctionCtx::new(reassigned, enums);
 
     // Bind each Arcis parameter to a Cranelift variable populated from the
     // entry block's parameters.
     let block_params = builder.block_params(entry).to_vec();
     for (i, p) in f.params.iter().enumerate() {
-        let ty = from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number);
+        let ty = from_ast(&p.ty).unwrap_or(ArcisType::Number);
         fctx.define(&p.name, ty, block_params[i], &mut builder);
     }
 
@@ -60,8 +61,7 @@ pub(crate) fn emit_function(
     // we emit a default of the type. Skip the emission when the block is
     // already terminated by an explicit `return` (or a control-flow jump).
     if !block_already_terminated(&builder) {
-        let return_ty = from_ast(&f.return_type.name, f.return_type.is_array)
-            .unwrap_or(ArcisType::Void);
+        let return_ty = from_ast(&f.return_type).unwrap_or(ArcisType::Void);
         match return_ty {
             ArcisType::Void => {
                 builder.ins().return_(&[]);

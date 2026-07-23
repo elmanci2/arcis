@@ -162,6 +162,19 @@ pub(crate) fn emit(
             ))
         }
         Expr::Member { object, property } => {
+            // Enum variant access: `Color.Red` -> a compile-time constant.
+            // Checked before the sys/field-access logic below since `object`
+            // being a plain identifier that names a known enum is otherwise
+            // indistinguishable from a variable at this point.
+            if let Expr::Ident(name) = object.as_ref() {
+                if fctx.is_enum_name(name) {
+                    let value = fctx.enum_variant_value(name, property).ok_or_else(|| {
+                        format!("enum `{}` has no variant `{}`", name, property)
+                    })?;
+                    let v = builder.ins().f64const(value);
+                    return Ok((v, ArcisType::Number));
+                }
+            }
             // sys.args / sys.X member access
             let mut is_sys_member = false;
             if let Expr::Ident(sys_name) = object.as_ref() {
@@ -271,6 +284,9 @@ pub(crate) fn emit(
             let call_new = builder.ins().call(callee_new, &[]);
             let vec_handle = builder.inst_results(call_new)[0];
             for elem in elements {
+                let arcis_ast::ArrayElement::Item(elem) = elem else {
+                    return Err("`...spread` in array literals is not yet supported by the Cranelift backend".to_string());
+                };
                 // Promote element to I64 handle. Numbers need bitcast to i64.
                 let (elem_val, elem_ty) = emit(builder, fctx, elem, runtime, user_fns, module)?;
                 let i64_val = promote_to_i64(builder, elem_val, elem_ty);
@@ -283,7 +299,10 @@ pub(crate) fn emit(
             let callee_new = module.declare_func_in_func(runtime.object_new, builder.func);
             let call_new = builder.ins().call(callee_new, &[]);
             let obj_handle = builder.inst_results(call_new)[0];
-            for (key, value) in fields {
+            for field in fields {
+                let arcis_ast::ObjectField::KV(key, value) = field else {
+                    return Err("`...spread` in object literals is not yet supported by the Cranelift backend".to_string());
+                };
                 let (val_v, val_ty) = emit(builder, fctx, value, runtime, user_fns, module)?;
                 let i64_val = promote_to_i64(builder, val_v, val_ty);
                 // key becomes a string literal data object → call arcis_string_from_cstr
@@ -299,6 +318,21 @@ pub(crate) fn emit(
             let type_name = ty.name();
             let handle = emit_string_literal(builder, fctx, module, type_name, runtime)?;
             Ok((handle, ArcisType::String))
+        }
+        // `null` / `undefined` have no dedicated runtime representation yet
+        // in the Cranelift backend; lower to a placeholder void value,
+        // matching the Rust backend's `()` erasure.
+        Expr::Null | Expr::Undefined => {
+            let v = builder.ins().iconst(I8, 0);
+            Ok((v, ArcisType::Void))
+        }
+        // Type assertions and the non-null assertion are compile-time-only
+        // in TypeScript: no runtime effect. Lower straight through.
+        Expr::AsAssertion { expr, .. } => emit(builder, fctx, expr, runtime, user_fns, module),
+        Expr::AsConst(inner) => emit(builder, fctx, inner, runtime, user_fns, module),
+        Expr::NonNullAssertion(inner) => emit(builder, fctx, inner, runtime, user_fns, module),
+        Expr::Arrow { .. } => {
+            Err("arrow functions are not yet supported by the Cranelift backend".to_string())
         }
     }
 }

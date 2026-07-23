@@ -27,7 +27,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module as CraneliftModule};
 use cranelift_object::ObjectModule;
 
-use crate::collect::collect_reassigned;
+use crate::collect::{collect_enums, collect_reassigned};
 use crate::context::{FnInfo, FunctionCtx};
 use crate::function::emit_function;
 use crate::rt::Runtime;
@@ -43,6 +43,7 @@ pub(crate) fn emit(
 ) -> Result<(), String> {
     let runtime = Runtime::declare(obj_module)?;
     let reassigned = collect_reassigned(&m.program);
+    let enums = collect_enums(&m.program);
 
     // ── Build a lookup: (exported_name) → (module that exports it, signature) ──
     let export_info = build_export_map(all_modules);
@@ -139,6 +140,7 @@ pub(crate) fn emit(
                 &user_fns,
                 &runtime,
                 &reassigned,
+                &enums,
                 obj_module,
             )?;
             obj_module
@@ -175,7 +177,7 @@ pub(crate) fn emit(
             builder.switch_to_block(entry);
             builder.seal_block(entry);
 
-            let mut fctx = FunctionCtx::new(&reassigned);
+            let mut fctx = FunctionCtx::new(&reassigned, &enums);
 
             for stmt in &m.program.stmts {
                 match stmt {
@@ -209,7 +211,7 @@ pub(crate) fn emit(
 fn param_types(f: &arcis_ast::Function) -> Vec<ArcisType> {
     f.params
         .iter()
-        .map(|p| from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number))
+        .map(|p| from_ast(&p.ty).unwrap_or(ArcisType::Number))
         .collect()
 }
 
@@ -353,12 +355,11 @@ fn import_sig_from_func(f: &arcis_ast::Function) -> cranelift_codegen::ir::Signa
         cranelift_codegen::isa::CallConv::SystemV,
     );
     for p in &f.params {
-        let ty = from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number);
+        let ty = from_ast(&p.ty).unwrap_or(ArcisType::Number);
         sig.params.push(AbiParam::new(ty.to_cl()));
     }
-    if f.return_type.name != "void" {
-        let ty = from_ast(&f.return_type.name, f.return_type.is_array)
-            .unwrap_or(ArcisType::Number);
+    if f.return_type.primitive_name() != "void" {
+        let ty = from_ast(&f.return_type).unwrap_or(ArcisType::Number);
         sig.returns.push(AbiParam::new(ty.to_cl()));
     }
     sig
@@ -370,12 +371,11 @@ fn function_signature(
 ) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
     for p in &f.params {
-        let ty = from_ast(&p.ty.name, p.ty.is_array).unwrap_or(ArcisType::Number);
+        let ty = from_ast(&p.ty).unwrap_or(ArcisType::Number);
         sig.params.push(AbiParam::new(ty.to_cl()));
     }
-    if f.return_type.name != "void" {
-        let ty = from_ast(&f.return_type.name, f.return_type.is_array)
-            .unwrap_or(ArcisType::Number);
+    if f.return_type.primitive_name() != "void" {
+        let ty = from_ast(&f.return_type).unwrap_or(ArcisType::Number);
         sig.returns.push(AbiParam::new(ty.to_cl()));
     }
     sig

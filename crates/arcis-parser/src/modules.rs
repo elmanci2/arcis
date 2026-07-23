@@ -163,6 +163,18 @@ pub(crate) fn parse_export(p: &mut Parser) -> Result<Stmt, ParseError> {
             let stmt = p.parse_let(false)?;
             Ok(Stmt::ExportDecl(Box::new(stmt)))
         }
+        TokenKind::Type => {
+            let stmt = p.parse_type_alias()?;
+            Ok(Stmt::ExportDecl(Box::new(stmt)))
+        }
+        TokenKind::Interface => {
+            let stmt = p.parse_interface()?;
+            Ok(Stmt::ExportDecl(Box::new(stmt)))
+        }
+        TokenKind::Enum => {
+            let stmt = p.parse_enum()?;
+            Ok(Stmt::ExportDecl(Box::new(stmt)))
+        }
         other => {
             let t = p.peek();
             Err(ParseError {

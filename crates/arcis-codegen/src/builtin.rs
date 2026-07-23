@@ -45,28 +45,47 @@ pub(crate) fn has_string_literal(expr: &Expr) -> bool {
 /// Emit the callback call for `find` / `filter` / `map`: `cb(x)`. The level
 /// of indirection is already handled by the closure pattern (e.g. `|&&x|`
 /// for find/filter, `|&x|` for map), so we pass `x` directly. The callback
-/// must be an identifier (a previously-declared named function).
-pub(crate) fn emit_callback_call(out: &mut String, cb: &Expr, arg: &str) {
-    if let Expr::Ident(name) = cb {
-        out.push_str(name);
-        out.push('(');
-        out.push_str(arg);
-        out.push(')');
-    } else {
-        out.push_str("todo!()");
+/// is either an identifier (a previously-declared named function) or an
+/// inline arrow function, called immediately as `(|params| body)(x)`.
+pub(crate) fn emit_callback_call(out: &mut String, cb: &Expr, arg: &str, ctx: &Ctx) {
+    match cb {
+        Expr::Ident(name) => {
+            out.push_str(name);
+            out.push('(');
+            out.push_str(arg);
+            out.push(')');
+        }
+        Expr::Arrow { .. } => {
+            out.push('(');
+            crate::expr::emit(out, cb, ctx);
+            out.push_str(")(");
+            out.push_str(arg);
+            out.push(')');
+        }
+        _ => out.push_str("todo!()"),
     }
 }
 
 /// Emit the callback call for `reduce`: `cb(acc, x)`.
-pub(crate) fn emit_callback_call2(out: &mut String, cb: &Expr, acc: &str, arg: &str) {
-    if let Expr::Ident(name) = cb {
-        out.push_str(name);
-        out.push('(');
-        out.push_str(acc);
-        out.push_str(", ");
-        out.push_str(arg);
-        out.push(')');
-    } else {
-        out.push_str("todo!()");
+pub(crate) fn emit_callback_call2(out: &mut String, cb: &Expr, acc: &str, arg: &str, ctx: &Ctx) {
+    match cb {
+        Expr::Ident(name) => {
+            out.push_str(name);
+            out.push('(');
+            out.push_str(acc);
+            out.push_str(", ");
+            out.push_str(arg);
+            out.push(')');
+        }
+        Expr::Arrow { .. } => {
+            out.push('(');
+            crate::expr::emit(out, cb, ctx);
+            out.push_str(")(");
+            out.push_str(acc);
+            out.push_str(", ");
+            out.push_str(arg);
+            out.push(')');
+        }
+        _ => out.push_str("todo!()"),
     }
 }

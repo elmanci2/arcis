@@ -9,8 +9,10 @@
 //! in `arcis_runtime.c` portable plain C. The trade-off is that
 //! `ArcisString`, `ArcisVec`, `ArcisObject` are always passed by handle.
 
-use cranelift_codegen::ir::types::{F64, I32, I64, I8};
+use cranelift_codegen::ir::types::{F64, I64, I8};
 use cranelift_codegen::ir::Type;
+
+use arcis_ast::Type as AstType;
 
 /// Arcis surface types as understood by the lowering. Used for both
 /// inferring the type of an expression and for declaring Cranelift
@@ -59,28 +61,46 @@ impl ArcisType {
 }
 
 /// Convert an Arcis type AST node into an [`ArcisType`] when possible.
-pub(crate) fn from_ast(name: &str, is_array: bool) -> Result<ArcisType, String> {
-    if is_array {
+pub(crate) fn from_ast(ty: &AstType) -> Result<ArcisType, String> {
+    match ty {
         // `T[]` becomes ArcisType::Array regardless of the inner type.
         // The inner type is stored in the Type AST node but the runtime
         // stores everything as i64 handles anyway.
-        return Ok(ArcisType::Array);
-    }
-    match name {
-        "number" => Ok(ArcisType::Number),
-        "boolean" => Ok(ArcisType::Boolean),
-        "string" => Ok(ArcisType::String),
-        "void" => Ok(ArcisType::Void),
-        other => {
-            // Could be an object type with a __Obj hash name. For now
-            // we accept any non-primitive as Object.
-            if other.starts_with("__Obj") || !other.is_empty() {
+        AstType::Array(_) => Ok(ArcisType::Array),
+        AstType::Object { .. } => Ok(ArcisType::Object),
+        AstType::Null | AstType::Undefined => Ok(ArcisType::Void),
+        AstType::Primitive(name) => match name.as_str() {
+            "number" | "bigint" => Ok(ArcisType::Number),
+            "boolean" => Ok(ArcisType::Boolean),
+            "string" => Ok(ArcisType::String),
+            "void" => Ok(ArcisType::Void),
+            // `any` has no fixed representation; treat as an opaque handle
+            // like other aggregates until the Cranelift backend grows a
+            // real tagged-value runtime.
+            "any" => Ok(ArcisType::Object),
+            other => Err(format!("unsupported type `{}` for the Cranelift backend", other)),
+        },
+        AstType::Literal(arcis_ast::LiteralValue::String(_)) => Ok(ArcisType::String),
+        AstType::Literal(arcis_ast::LiteralValue::Number(_)) => Ok(ArcisType::Number),
+        AstType::Literal(arcis_ast::LiteralValue::Bool(_)) => Ok(ArcisType::Boolean),
+        // Unions/intersections erase to the first member's representation,
+        // matching the Rust backend's erasure model.
+        AstType::Union(members) | AstType::Intersection(members) => members
+            .first()
+            .map(from_ast)
+            .unwrap_or(Ok(ArcisType::Void)),
+        // Function values and named (type-alias / interface) types are not
+        // yet lowered by the Cranelift backend; both need a runtime
+        // representation beyond a plain i64 handle.
+        AstType::Function { .. } => Err("function types are not yet supported by the Cranelift backend".to_string()),
+        AstType::Named(other) => {
+            // Could be an object type with a __Obj hash name, or a
+            // user-defined interface/type-alias name. For now we accept
+            // any named type as an opaque Object handle.
+            if !other.is_empty() {
                 Ok(ArcisType::Object)
             } else {
-                Err(format!(
-                    "unsupported type `{}` for the Cranelift backend",
-                    other
-                ))
+                Err(format!("unsupported type `{}` for the Cranelift backend", other))
             }
         }
     }

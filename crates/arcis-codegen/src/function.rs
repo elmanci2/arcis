@@ -18,7 +18,7 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
         out.push_str(": ");
         // Arrays are passed by reference so we don't consume the argument
         // (TS semantics: passing an array to a function does not invalidate it).
-        if p.ty.is_array {
+        if p.ty.is_array() {
             out.push('&');
         }
         out.push_str(&crate::types::ts_type_to_rust(&p.ty, ctx.is_root));
@@ -36,6 +36,7 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
         current_let_type: None,
         current_return_type: Some(&f.return_type),
         is_root: ctx.is_root,
+        enum_names: ctx.enum_names,
     };
     for stmt in &f.body {
         crate::stmt::emit(out, stmt, 1, &body_ctx);

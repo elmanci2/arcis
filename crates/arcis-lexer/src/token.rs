@@ -38,6 +38,11 @@ pub enum TokenKind {
     Of,
     Break,
     Continue,
+    Switch,
+    Case,
+    Try,
+    Catch,
+    Throw,
 
     // Modules (ES modules / TS).
     Import,
@@ -54,6 +59,15 @@ pub enum TokenKind {
     TypeNumber,
     TypeBoolean,
     TypeVoid,
+    TypeAny,
+
+    // Type-system keywords.
+    Type,
+    Interface,
+    Enum,
+    Extends,
+    Null,
+    Undefined,
 
     // ── Operators ──────────────────────────────────────────────────────────
     Plus,
@@ -71,6 +85,14 @@ pub enum TokenKind {
     And,
     Or,
     Bang,
+    /// `|` — union type separator (not `||`).
+    Bar,
+    /// `&` — intersection type separator (not `&&`).
+    Ampersand,
+    /// `=>` — function type arrow.
+    FatArrow,
+    /// `?` — optional property / non-null narrowing marker.
+    Question,
 
     // ── Punctuation ────────────────────────────────────────────────────────
     LParen,
@@ -84,6 +106,8 @@ pub enum TokenKind {
     Colon,
     ColonColon,
     Dot,
+    /// `...` — spread in array/object literals.
+    DotDotDot,
 
     Eof,
 }
@@ -105,6 +129,11 @@ impl TokenKind {
                 | Self::Of
                 | Self::Break
                 | Self::Continue
+                | Self::Switch
+                | Self::Case
+                | Self::Try
+                | Self::Catch
+                | Self::Throw
                 | Self::Import
                 | Self::Export
                 | Self::From
@@ -115,6 +144,13 @@ impl TokenKind {
                 | Self::TypeNumber
                 | Self::TypeBoolean
                 | Self::TypeVoid
+                | Self::TypeAny
+                | Self::Type
+                | Self::Interface
+                | Self::Enum
+                | Self::Extends
+                | Self::Null
+                | Self::Undefined
         )
     }
 }
@@ -137,6 +173,11 @@ impl fmt::Display for TokenKind {
             Self::Of => write!(f, "`of`"),
             Self::Break => write!(f, "`break`"),
             Self::Continue => write!(f, "`continue`"),
+            Self::Switch => write!(f, "`switch`"),
+            Self::Case => write!(f, "`case`"),
+            Self::Try => write!(f, "`try`"),
+            Self::Catch => write!(f, "`catch`"),
+            Self::Throw => write!(f, "`throw`"),
             Self::Import => write!(f, "`import`"),
             Self::Export => write!(f, "`export`"),
             Self::From => write!(f, "`from`"),
@@ -147,6 +188,13 @@ impl fmt::Display for TokenKind {
             Self::TypeNumber => write!(f, "`number`"),
             Self::TypeBoolean => write!(f, "`boolean`"),
             Self::TypeVoid => write!(f, "`void`"),
+            Self::TypeAny => write!(f, "`any`"),
+            Self::Type => write!(f, "`type`"),
+            Self::Interface => write!(f, "`interface`"),
+            Self::Enum => write!(f, "`enum`"),
+            Self::Extends => write!(f, "`extends`"),
+            Self::Null => write!(f, "`null`"),
+            Self::Undefined => write!(f, "`undefined`"),
             Self::Plus => write!(f, "`+`"),
             Self::Minus => write!(f, "`-`"),
             Self::Star => write!(f, "`*`"),
@@ -162,6 +210,10 @@ impl fmt::Display for TokenKind {
             Self::And => write!(f, "`&&`"),
             Self::Or => write!(f, "`||`"),
             Self::Bang => write!(f, "`!`"),
+            Self::Bar => write!(f, "`|`"),
+            Self::Ampersand => write!(f, "`&`"),
+            Self::FatArrow => write!(f, "`=>`"),
+            Self::Question => write!(f, "`?`"),
             Self::LParen => write!(f, "`(`"),
             Self::RParen => write!(f, "`)`"),
             Self::LBrace => write!(f, "`{{`"),
@@ -173,6 +225,7 @@ impl fmt::Display for TokenKind {
             Self::Colon => write!(f, "`:`"),
             Self::ColonColon => write!(f, "`::`"),
             Self::Dot => write!(f, "`.`"),
+            Self::DotDotDot => write!(f, "`...`"),
             Self::Eof => write!(f, "end of file"),
         }
     }

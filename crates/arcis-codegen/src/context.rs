@@ -25,4 +25,8 @@ pub(crate) struct Ctx<'a> {
     pub current_return_type: Option<&'a Type>,
     /// `true` if we are generating the root (`main`) module.
     pub is_root: bool,
+    /// Names of every `enum` declared anywhere in the program. Used by
+    /// `emit_member` to tell `Color.Red` (an enum variant, -> `Color::Red`)
+    /// apart from `person.name` (a field access).
+    pub enum_names: &'a HashSet<String>,
 }

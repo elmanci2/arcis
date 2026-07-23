@@ -46,17 +46,24 @@ pub(crate) fn emit_stmt(
         Stmt::Let { name, ty, value, .. } | Stmt::Const { name, ty, value, .. } => {
             let (v, inferred_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
             let resolved = match ty {
-                Some(t) => from_ast(&t.name, t.is_array)?,
+                Some(t) => from_ast(t)?,
                 None => inferred_ty,
             };
             fctx.define(name, resolved, v, builder);
             // Track element type for array bindings and field types for objects.
             if let Some(t) = ty {
-                if t.is_array {
-                    fctx.set_element_ty(name, from_ast(&t.name, false)?);
+                // The "object shape" of `t`, unwrapping one level of `T[]`
+                // if present (an array of objects still needs its field
+                // types tracked for `arr[i].field` access).
+                let object_source = match t.array_inner() {
+                    Some(inner) => Some(inner),
+                    None => Some(t),
+                };
+                if let Some(inner) = t.array_inner() {
+                    fctx.set_element_ty(name, from_ast(inner)?);
                 }
-                if !t.fields.is_empty() {
-                    fctx.set_object_fields(name, &t.fields);
+                if let Some(fields) = object_source.and_then(|o| o.object_fields()) {
+                    fctx.set_object_fields(name, fields);
                 }
             }
             Ok(())
@@ -263,6 +270,18 @@ pub(crate) fn emit_stmt(
         }
         Stmt::ExportDefault(_) => {
             Err("`export default` is not yet supported by the Cranelift backend (Phase 4)".to_string())
+        }
+        Stmt::TypeAlias { .. } | Stmt::Interface { .. } | Stmt::Enum { .. } => {
+            // Type-only / enum declarations have no runtime representation —
+            // enum variant access resolves to a constant at the `Expr::Member`
+            // call site (see `expr.rs`), driven by `collect::collect_enums`.
+            Ok(())
+        }
+        Stmt::Switch { .. } => {
+            Err("`switch` is not yet supported by the Cranelift backend".to_string())
+        }
+        Stmt::Try { .. } | Stmt::Throw(_) => {
+            Err("`try`/`catch`/`throw` are not yet supported by the Cranelift backend".to_string())
         }
     }
 }

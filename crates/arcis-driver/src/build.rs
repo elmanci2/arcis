@@ -19,7 +19,15 @@ use arcis_linker::Module;
 /// Run the full pipeline: resolve modules, validate them, generate sources
 /// for the chosen backend, and write them to disk.
 pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildOutput, String> {
-    let modules = arcis_linker::resolve(input)?;
+    let mut modules = arcis_linker::resolve(input)?;
+
+    // Alpha-rename shadowed bindings before anything else sees the AST, so
+    // validation (which treats `if`/`while`/`for` bodies as sharing their
+    // enclosing scope) never reports valid shadowing as a duplicate, and
+    // codegen's flat name-keyed maps never have to reason about scope.
+    for m in &mut modules {
+        arcis_validation::resolve_shadowing(&mut m.program);
+    }
 
     for m in &modules {
         let issues = arcis_validation::validate(&m.program);

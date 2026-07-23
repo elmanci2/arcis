@@ -1,0 +1,50 @@
+// switch.tsr — switch/case/default (non-fallthrough semantics: each case
+// is its own block, not a C-style fallthrough chain — see
+// docs/language-reference.md).
+// Covers: number discriminant, string discriminant, grouped case labels,
+// and a missing default (falls through silently, matching TS).
+
+function describeDay(day: number): string {
+    let result: string = "unknown";
+    switch (day) {
+        case 1:
+            result = "Monday";
+            break;
+        case 6:
+        case 7:
+            result = "Weekend";
+            break;
+        default:
+            result = "Weekday";
+    }
+    return result;
+}
+
+print("day 1: " + describeDay(1));    // Monday
+print("day 6: " + describeDay(6));    // Weekend
+print("day 7: " + describeDay(7));    // Weekend
+print("day 3: " + describeDay(3));    // Weekday
+
+let color: string = "green";
+switch (color) {
+    case "red":
+        print("Stop");
+        break;
+    case "green":
+        print("Go");
+        break;
+    default:
+        print("Caution");
+}
+
+// No default: unmatched values simply fall through with no effect.
+let n: number = 42;
+switch (n) {
+    case 1:
+        print("one");
+        break;
+    case 2:
+        print("two");
+        break;
+}
+print("done");

@@ -1,0 +1,29 @@
+// spread.tsr — spread syntax in array and object literals.
+// Covers: array spread (combining/prepending/appending), and object spread
+// (copying a base object with some fields overridden).
+
+// ============================================================
+// 1. Array spread
+// ============================================================
+let a: number[] = [1, 2, 3];
+let b: number[] = [4, 5];
+
+let combined: number[] = [...a, ...b];
+print("combined.length: " + combined.length);   // 5
+print("combined[0]: " + combined[0]);            // 1
+print("combined[4]: " + combined[4]);            // 5
+
+let withExtra: number[] = [0, ...a, 99];
+print("withExtra.length: " + withExtra.length);  // 5
+print("withExtra[0]: " + withExtra[0]);          // 0
+print("withExtra[4]: " + withExtra[4]);          // 99
+
+// ============================================================
+// 2. Object spread
+// ============================================================
+let base: { name: string, age: number } = { name: "Ana", age: 30 };
+let older: { name: string, age: number } = { ...base, age: 31 };
+
+print("base.age: " + base.age);      // 30 (unchanged)
+print("older.name: " + older.name);  // "Ana" (copied from base)
+print("older.age: " + older.age);    // 31 (overridden)

@@ -224,7 +224,10 @@ Full example: `examples/mods/`.
 
 ## Out of scope (for now)
 
-- Classes / interfaces
+- Classes, generics
+- Closures that capture variables (arrow functions are supported, but
+  non-capturing only), destructuring, template literals
+- `bigint` literals
 - `import * as ns` (namespace import)
 - Async / await
 
@@ -249,6 +252,15 @@ The codegen emits Rust source using:
 | `number` | `f64`       |
 | `boolean`| `bool`      |
 | `void`   | `()`        |
+| `any`    | inferred on `let`/`const`; `Box<dyn Any>` on fn params/returns |
+| `null` / `undefined` | `()` |
+| `A \| B` / `A & B` | Rust type of the first member (see [`docs/language-reference.md`](docs/language-reference.md#type-erasure)) |
+| `type X = ...` | resolved away before codegen |
+| `interface X { ... }` | named `pub struct` (like inline object types, but with its own name) |
+| `enum X { A, B = 5 }` | `pub enum X { A, B = 5 }`; `X.A` → `X::A` |
+| `(x: number) => x * 2` | non-capturing Rust closure (coerces to `fn(f64) -> f64`) |
+| `switch`/`case` | `if`/`else if` chain (see [`docs/language-reference.md`](docs/language-reference.md)) |
+| `try`/`catch`/`throw` | `std::panic::catch_unwind` / `panic!` |
 
 String concatenation with `+` is translated to `format!("{}{}", a, b)` when at
 least one of the operands is a string literal; otherwise plain `+` is used. This
@@ -279,9 +291,16 @@ graph and pipeline diagram.
 
 - Typing is **static in the parser but not verified**: writing `let x: number = "hi";`
   generates the same code and `rustc` will complain. That is acceptable for a
-  first iteration.
+  first iteration. This extends to the newer "everyday types" additions:
+  union/intersection types erase to their first member's Rust type, and
+  `any`/`as`/`as const`/`!` have no runtime effect (matching TypeScript's own
+  erasure model).
 - The codegen follows TS semantics but does not implement shadowing, closures,
   or first-class functions yet.
+- The Cranelift backend only covers primitives, `let`/`const`, control flow,
+  and function calls so far — unions, interfaces, type aliases, and `any`
+  fall back to an opaque handle or an error there (the Rust backend supports
+  all of them).
 
 ## Next steps (ideas)
 

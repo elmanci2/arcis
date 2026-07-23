@@ -10,7 +10,7 @@
 //! Everything else (literals, member access, index, binary, unary, paths,
 //! array / object literals) is emitted inline.
 
-use arcis_ast::{BinOp, Expr, UnaryOp};
+use arcis_ast::{ArrayElement, ArrowBody, BinOp, Expr, ObjectField, Param, Type, UnaryOp};
 
 use crate::context::Ctx;
 
@@ -34,6 +34,58 @@ pub(crate) fn emit(out: &mut String, expr: &Expr, ctx: &Ctx) {
         Expr::TypeOf(operand) => {
             let type_name = infer_type_name(operand, ctx);
             out.push_str(&crate::types::rust_string_literal(type_name));
+        }
+        Expr::Null | Expr::Undefined => out.push_str("()"),
+        // Type assertions (`as Type`, `as const`) and the non-null assertion
+        // (`!`) are compile-time-only in TypeScript — they have no runtime
+        // effect. Arcis mirrors that: emit just the inner expression.
+        Expr::AsAssertion { expr, .. } => emit(out, expr, ctx),
+        Expr::AsConst(inner) => emit(out, inner, ctx),
+        Expr::NonNullAssertion(inner) => emit(out, inner, ctx),
+        Expr::Arrow { params, return_type, body } => {
+            emit_arrow(out, params, return_type.as_ref(), body, ctx)
+        }
+    }
+}
+
+/// Emit a non-capturing Rust closure for an Arcis arrow function:
+/// `|x: f64| -> f64 { x * 2.0 }`. When the source omits the return type,
+/// the Rust annotation is omitted too (letting `rustc` infer it) rather
+/// than defaulting to `void`/`()`, which would be wrong for the common
+/// `(x: number) => x * 2` callback form.
+fn emit_arrow(out: &mut String, params: &[Param], return_type: Option<&Type>, body: &ArrowBody, ctx: &Ctx) {
+    out.push('|');
+    for (i, p) in params.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&p.name);
+        out.push_str(": ");
+        out.push_str(&crate::types::ts_type_to_rust(&p.ty, ctx.is_root));
+    }
+    out.push('|');
+    if let Some(rt) = return_type {
+        out.push_str(" -> ");
+        out.push_str(&crate::types::ts_type_to_rust(rt, ctx.is_root));
+    }
+    match body {
+        ArrowBody::Expr(e) => {
+            out.push(' ');
+            if return_type.is_some() {
+                // An explicit `-> T` on a Rust closure requires a block body.
+                out.push_str("{ ");
+                emit(out, e, ctx);
+                out.push_str(" }");
+            } else {
+                emit(out, e, ctx);
+            }
+        }
+        ArrowBody::Block(stmts) => {
+            out.push_str(" {\n");
+            for s in stmts {
+                crate::stmt::emit(out, s, 1, ctx);
+            }
+            out.push('}');
         }
     }
 }
@@ -90,6 +142,17 @@ fn emit_member(out: &mut String, object: &Expr, property: &str, ctx: &Ctx) {
             crate::sys::emit_member(out, property);
             return;
         }
+        // Enum variant access: `Color.Red` -> `Color::Red`. Distinguished
+        // from a field access by `module` naming a known `enum`, never a
+        // variable (Arcis identifiers are lowerCamelCase by convention but
+        // this isn't enforced, so we go by the declared-enum-names set
+        // rather than casing).
+        if ctx.enum_names.contains(module) {
+            out.push_str(module);
+            out.push_str("::");
+            out.push_str(property);
+            return;
+        }
     }
     // `.length` is special-cased based on the type:
     //   string → `.chars().count() as f64` (Unicode codepoints)
@@ -124,38 +187,107 @@ fn emit_index(out: &mut String, object: &Expr, index: &Expr, ctx: &Ctx) {
     out.push_str(" as usize]");
 }
 
-fn emit_array_literal(out: &mut String, elements: &[Expr], ctx: &Ctx) {
+fn emit_array_literal(out: &mut String, elements: &[ArrayElement], ctx: &Ctx) {
+    let has_spread = elements.iter().any(|e| matches!(e, ArrayElement::Spread(_)));
     if elements.is_empty() {
         // Without a declared type, default to `Vec<f64>`. For other types,
         // declare the type on the let/const (handled in `Stmt::Let` /
         // `Stmt::Const`).
         out.push_str("Vec::<f64>::new()");
-    } else {
+    } else if !has_spread {
         out.push_str("vec![");
         for (i, e) in elements.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
             }
+            let ArrayElement::Item(e) = e else { unreachable!("checked above") };
             emit(out, e, ctx);
         }
         out.push(']');
+    } else {
+        // `vec![]` can't splice in a runtime `Vec`, so build one instead:
+        // `{ let mut __v = Vec::new(); __v.push(x); __v.extend(base.iter().cloned()); __v }`.
+        out.push_str("{ let mut __arcis_spread = Vec::new(); ");
+        for e in elements {
+            match e {
+                ArrayElement::Item(e) => {
+                    out.push_str("__arcis_spread.push(");
+                    emit(out, e, ctx);
+                    out.push_str("); ");
+                }
+                ArrayElement::Spread(e) => {
+                    out.push_str("__arcis_spread.extend(");
+                    emit(out, e, ctx);
+                    out.push_str(".iter().cloned()); ");
+                }
+            }
+        }
+        out.push_str("__arcis_spread }");
     }
 }
 
-fn emit_object_literal(out: &mut String, fields: &[(String, Expr)], ctx: &Ctx) {
+fn emit_object_literal(out: &mut String, fields: &[ObjectField], ctx: &Ctx) {
     // Requires that the context (let/const) has declared the type, because
-    // we emit `StructName { field: value, ... }` directly.
-    if let Some(ty) = ctx.current_let_type {
-        if !ty.fields.is_empty() {
-            out.push_str(&ty.name);
+    // we emit `StructName { field: value, ... }` directly. When the
+    // declared type is `T[]`, unwrap one level of `Array` first — each
+    // element literal is shaped like `T`, not `T[]`.
+    if let Some(outer_ty) = ctx.current_let_type {
+        let ty = outer_ty.array_inner().unwrap_or(outer_ty);
+        if let Some(obj_fields) = ty.object_fields() {
+            out.push_str(ty.struct_name().unwrap_or(""));
             out.push_str(" { ");
-            for (i, (k, v)) in fields.iter().enumerate() {
-                if i > 0 {
+            let mut first = true;
+            // Rust struct-update syntax (`..base`) only accepts one trailing
+            // expression; the last `...spread` wins if the source has more
+            // than one (a rare case we don't try to resolve field-by-field).
+            let mut last_spread: Option<&Expr> = None;
+            for f in fields {
+                match f {
+                    ObjectField::KV(k, v) => {
+                        if !first {
+                            out.push_str(", ");
+                        }
+                        first = false;
+                        let optional = obj_fields
+                            .iter()
+                            .find(|(fname, _, _)| fname == k)
+                            .map(|(_, _, opt)| *opt)
+                            .unwrap_or(false);
+                        out.push_str(k);
+                        out.push_str(": ");
+                        if optional {
+                            out.push_str("Some(");
+                            emit(out, v, ctx);
+                            out.push(')');
+                        } else {
+                            emit(out, v, ctx);
+                        }
+                    }
+                    ObjectField::Spread(e) => last_spread = Some(e),
+                }
+            }
+            if let Some(base) = last_spread {
+                if !first {
                     out.push_str(", ");
                 }
-                out.push_str(k);
-                out.push_str(": ");
-                emit(out, v, ctx);
+                out.push_str("..");
+                emit(out, base, ctx);
+            } else {
+                // No spread: every declared field not given explicitly must
+                // still appear (optional -> `None`, required -> `todo!()`)
+                // — a partial struct literal wouldn't compile.
+                for (fname, _, optional) in obj_fields {
+                    if fields.iter().any(|f| matches!(f, ObjectField::KV(k, _) if k == fname)) {
+                        continue;
+                    }
+                    if !first {
+                        out.push_str(", ");
+                    }
+                    first = false;
+                    out.push_str(fname);
+                    out.push_str(": ");
+                    out.push_str(if *optional { "None" } else { "todo!()" });
+                }
             }
             out.push_str(" }");
             return;

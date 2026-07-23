@@ -31,9 +31,11 @@ use arcis_ast::Program;
 
 mod duplicate;
 mod loop_ctx;
+mod shadowing;
 mod unused;
 
 pub use duplicate::DuplicateDecl;
+pub use shadowing::resolve_shadowing;
 pub use unused::UnusedDecl;
 
 /// Category of a declaration we may flag as unused or duplicate.
@@ -75,12 +77,12 @@ pub fn validate(program: &Program) -> Vec<ValidationIssue> {
     // ── Scope 1: main ────────────────────────────────────────────────────
     let mut main_decl: Vec<UnusedDecl> = Vec::new();
     let mut main_used: HashSet<String> = HashSet::new();
-    let mut main_seen: HashMap<String, UnusedDecl> = HashMap::new();
+    let mut main_scopes: Vec<HashMap<String, UnusedDecl>> = vec![HashMap::new()];
     for stmt in &program.stmts {
         if matches!(stmt, arcis_ast::Stmt::Function(_)) {
             continue;
         }
-        duplicate::collect_decl(stmt, &mut main_decl, &mut main_seen, &mut issues);
+        duplicate::collect_decl(stmt, &mut main_decl, &mut main_scopes, &mut issues);
         unused::collect_uses(stmt, &mut main_used);
         loop_ctx::check_loop_context(stmt, 0, &mut issues);
     }
@@ -91,7 +93,8 @@ pub fn validate(program: &Program) -> Vec<ValidationIssue> {
         if let arcis_ast::Stmt::Function(f) = stmt {
             let mut func_decl: Vec<UnusedDecl> = Vec::new();
             let mut func_used: HashSet<String> = HashSet::new();
-            let mut func_seen: HashMap<String, UnusedDecl> = HashMap::new();
+            let mut func_scopes: Vec<HashMap<String, UnusedDecl>> = vec![HashMap::new()];
+            let func_seen = func_scopes.last_mut().expect("at least one scope");
             for p in &f.params {
                 let decl = UnusedDecl {
                     kind: DeclKind::Parameter,
@@ -114,7 +117,7 @@ pub fn validate(program: &Program) -> Vec<ValidationIssue> {
                 }
             }
             for s in &f.body {
-                duplicate::collect_decl(s, &mut func_decl, &mut func_seen, &mut issues);
+                duplicate::collect_decl(s, &mut func_decl, &mut func_scopes, &mut issues);
                 unused::collect_uses(s, &mut func_used);
                 loop_ctx::check_loop_context(s, 0, &mut issues);
             }

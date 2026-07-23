@@ -288,6 +288,26 @@ fn collect_stmt(stmt: &Stmt, defs: &mut Vec<DefInfo>) {
                 collect_stmt(s, defs);
             }
         }
+        Stmt::Switch { cases, .. } => {
+            for case in cases {
+                for s in &case.body {
+                    collect_stmt(s, defs);
+                }
+            }
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                collect_stmt(s, defs);
+            }
+            for s in catch_body {
+                collect_stmt(s, defs);
+            }
+        }
+
+        // ── enum ──────────────────────────────────────────────────
+        Stmt::Enum { name, line, col, .. } => {
+            defs.push(DefInfo { name: name.clone(), line: *line, col: *col, import: None });
+        }
 
         // ── leaves / unhandled ────────────────────────────────────
         Stmt::Assign { .. }
@@ -297,6 +317,9 @@ fn collect_stmt(stmt: &Stmt, defs: &mut Vec<DefInfo>) {
         | Stmt::Break
         | Stmt::Continue
         | Stmt::Expr(_)
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. }
+        | Stmt::Throw(_)
         | Stmt::ExportDefault(ExportDefault::Expr(_)) => {}
     }
 }

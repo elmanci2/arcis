@@ -54,6 +54,11 @@ pub(crate) fn keywords() -> HashMap<&'static str, TokenKind> {
     m.insert("of", TokenKind::Of);
     m.insert("break", TokenKind::Break);
     m.insert("continue", TokenKind::Continue);
+    m.insert("switch", TokenKind::Switch);
+    m.insert("case", TokenKind::Case);
+    m.insert("try", TokenKind::Try);
+    m.insert("catch", TokenKind::Catch);
+    m.insert("throw", TokenKind::Throw);
     // Module keywords (ES modules / TS).
     m.insert("import", TokenKind::Import);
     m.insert("export", TokenKind::Export);
@@ -70,6 +75,13 @@ pub(crate) fn keywords() -> HashMap<&'static str, TokenKind> {
     m.insert("number", TokenKind::TypeNumber);
     m.insert("boolean", TokenKind::TypeBoolean);
     m.insert("void", TokenKind::TypeVoid);
+    m.insert("any", TokenKind::TypeAny);
+    m.insert("type", TokenKind::Type);
+    m.insert("interface", TokenKind::Interface);
+    m.insert("enum", TokenKind::Enum);
+    m.insert("extends", TokenKind::Extends);
+    m.insert("null", TokenKind::Null);
+    m.insert("undefined", TokenKind::Undefined);
     m
 }
 
@@ -253,11 +265,23 @@ pub(crate) fn read_punct_or_op(lx: &mut Lexer) -> Result<TokenKind, LexError> {
                 TokenKind::Colon
             }
         }
-        '.' => TokenKind::Dot,
+        '.' => {
+            if lx.peek_char() == Some('.') && lx.peek_char_at(1) == Some('.') {
+                lx.advance();
+                lx.advance();
+                TokenKind::DotDotDot
+            } else {
+                TokenKind::Dot
+            }
+        }
+        '?' => TokenKind::Question,
         '=' => {
             if lx.peek_char() == Some('=') {
                 lx.advance();
                 TokenKind::EqEq
+            } else if lx.peek_char() == Some('>') {
+                lx.advance();
+                TokenKind::FatArrow
             } else {
                 TokenKind::Eq
             }
@@ -286,13 +310,21 @@ pub(crate) fn read_punct_or_op(lx: &mut Lexer) -> Result<TokenKind, LexError> {
                 TokenKind::Gt
             }
         }
-        '&' if lx.peek_char() == Some('&') => {
-            lx.advance();
-            TokenKind::And
+        '&' => {
+            if lx.peek_char() == Some('&') {
+                lx.advance();
+                TokenKind::And
+            } else {
+                TokenKind::Ampersand
+            }
         }
-        '|' if lx.peek_char() == Some('|') => {
-            lx.advance();
-            TokenKind::Or
+        '|' => {
+            if lx.peek_char() == Some('|') {
+                lx.advance();
+                TokenKind::Or
+            } else {
+                TokenKind::Bar
+            }
         }
         other => {
             return Err(LexError {

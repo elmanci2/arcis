@@ -5,7 +5,7 @@
 //! its production. The `for` and function-body parsers recurse back into
 //! [`parse_stmt`](Parser::parse_stmt).
 
-use arcis_ast::{Expr, Function, Param, Stmt, Type};
+use arcis_ast::{Expr, Function, Param, Stmt, SwitchCase, Type};
 use arcis_lexer::TokenKind;
 
 use crate::error::ParseError;
@@ -18,6 +18,9 @@ impl Parser {
             TokenKind::Let => self.parse_let(false),
             TokenKind::Const => self.parse_let(true),
             TokenKind::Function => self.parse_function(),
+            TokenKind::Type => self.parse_type_alias(),
+            TokenKind::Interface => self.parse_interface(),
+            TokenKind::Enum => self.parse_enum(),
             TokenKind::Import => super::modules::parse_import(self),
             TokenKind::From => super::modules::parse_from_import(self),
             TokenKind::Export => super::modules::parse_export(self),
@@ -25,6 +28,9 @@ impl Parser {
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
+            TokenKind::Switch => self.parse_switch(),
+            TokenKind::Try => self.parse_try(),
+            TokenKind::Throw => self.parse_throw(),
             TokenKind::Break => {
                 self.advance();
                 self.expect(&TokenKind::Semi, "`;` after `break`")?;
@@ -252,6 +258,111 @@ impl Parser {
         })
     }
 
+    /// `type Name = <type>;`
+    pub(crate) fn parse_type_alias(&mut self) -> Result<Stmt, ParseError> {
+        let kw_tok = self.advance(); // type
+        let name_tok = self.expect(&TokenKind::Ident(String::new()), "type alias name")?;
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        self.expect(&TokenKind::Eq, "`=` after type alias name")?;
+        let ty = self.parse_type()?;
+        self.expect(&TokenKind::Semi, "`;` after type alias")?;
+        Ok(Stmt::TypeAlias {
+            name,
+            ty,
+            line: kw_tok.line,
+            col: kw_tok.col,
+        })
+    }
+
+    /// `interface Name [extends Base, ...] { field: type, field2?: type }`
+    pub(crate) fn parse_interface(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // interface
+        let name_tok = self.expect(&TokenKind::Ident(String::new()), "interface name")?;
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        let mut extends = Vec::new();
+        if self.matches(&TokenKind::Extends) {
+            loop {
+                let base = self.expect_ident("base interface name")?;
+                extends.push(base);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(&TokenKind::LBrace, "`{` opening interface body")?;
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let key = self.expect_ident("field name in interface")?;
+            let optional = self.matches(&TokenKind::Question);
+            self.expect(&TokenKind::Colon, "`:` after field name")?;
+            let field_ty = self.parse_type()?;
+            fields.push((key, Box::new(field_ty), optional));
+            // `,` or `;` both separate fields; trailing separator is optional.
+            let _ = self.matches(&TokenKind::Comma) || self.matches(&TokenKind::Semi);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing interface body")?;
+        Ok(Stmt::Interface {
+            name,
+            extends,
+            fields,
+            line: name_tok.line,
+            col: name_tok.col,
+        })
+    }
+
+    /// `enum Name { A, B = 5, C }`
+    pub(crate) fn parse_enum(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // enum
+        let name_tok = self.expect(&TokenKind::Ident(String::new()), "enum name")?;
+        let name = match &name_tok.kind {
+            TokenKind::Ident(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        self.expect(&TokenKind::LBrace, "`{` opening enum body")?;
+        let mut variants = Vec::new();
+        if !self.check(&TokenKind::RBrace) {
+            loop {
+                let variant_name = self.expect_ident("enum variant name")?;
+                let value = if self.matches(&TokenKind::Eq) {
+                    let tok = self.advance();
+                    match tok.kind {
+                        TokenKind::Number(n) => Some(n as i64),
+                        other => {
+                            return Err(ParseError {
+                                line: tok.line,
+                                col: tok.col,
+                                msg: format!("expected a numeric enum value, found {}", other),
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
+                variants.push((variant_name, value));
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                // Allow a trailing comma before `}`.
+                if self.check(&TokenKind::RBrace) {
+                    break;
+                }
+            }
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing enum body")?;
+        Ok(Stmt::Enum {
+            name,
+            variants,
+            line: name_tok.line,
+            col: name_tok.col,
+        })
+    }
+
     /// `return [expr];`
     pub(crate) fn parse_return(&mut self) -> Result<Stmt, ParseError> {
         self.advance(); // return
@@ -413,5 +524,93 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "`}` closing `for` body")?;
 
         Ok(Stmt::For { init, condition, update, body })
+    }
+
+    /// `switch (discriminant) { case v1: stmt* case v2: stmt* default: stmt* }`
+    ///
+    /// Consecutive `case` labels with no statements between them share one
+    /// body (`case v1: case v2: stmt*` -> one [`SwitchCase`] with
+    /// `values: [v1, v2]`), matching Rust's `v1 | v2 => { }` or-pattern.
+    /// Non-fallthrough otherwise: each case's body is its own block, not a
+    /// C-style fallthrough chain (see `docs/language-reference.md`).
+    pub(crate) fn parse_switch(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // switch
+        self.expect(&TokenKind::LParen, "`(` after `switch`")?;
+        let discriminant = self.parse_expr()?;
+        self.expect(&TokenKind::RParen, "`)` after switch discriminant")?;
+        self.expect(&TokenKind::LBrace, "`{` opening switch body")?;
+
+        let mut cases = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let mut values = Vec::new();
+            let mut is_default = false;
+            loop {
+                if self.matches(&TokenKind::Case) {
+                    values.push(self.parse_expr()?);
+                    self.expect(&TokenKind::Colon, "`:` after `case` value")?;
+                } else if self.matches(&TokenKind::Default) {
+                    is_default = true;
+                    self.expect(&TokenKind::Colon, "`:` after `default`")?;
+                } else {
+                    break;
+                }
+                if !matches!(self.peek_kind(), TokenKind::Case | TokenKind::Default) {
+                    break;
+                }
+            }
+            if values.is_empty() && !is_default {
+                let t = self.peek();
+                return Err(ParseError {
+                    line: t.line,
+                    col: t.col,
+                    msg: "expected `case` or `default` in switch body".to_string(),
+                });
+            }
+            let mut body = Vec::new();
+            while !matches!(self.peek_kind(), TokenKind::Case | TokenKind::Default | TokenKind::RBrace)
+                && !self.check(&TokenKind::Eof)
+            {
+                body.push(self.parse_stmt()?);
+            }
+            cases.push(SwitchCase { values, body, is_default });
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing switch body")?;
+        Ok(Stmt::Switch { discriminant, cases })
+    }
+
+    /// `try { body } catch (e) { catch_body }`.
+    pub(crate) fn parse_try(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // try
+        self.expect(&TokenKind::LBrace, "`{` opening `try` body")?;
+        let mut body = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing `try` body")?;
+
+        self.expect(&TokenKind::Catch, "`catch` after `try` body")?;
+        let catch_name = if self.matches(&TokenKind::LParen) {
+            let name = self.expect_ident("caught error name")?;
+            self.expect(&TokenKind::RParen, "`)` after caught error name")?;
+            Some(name)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::LBrace, "`{` opening `catch` body")?;
+        let mut catch_body = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            catch_body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace, "`}` closing `catch` body")?;
+
+        Ok(Stmt::Try { body, catch_name, catch_body })
+    }
+
+    /// `throw expr;`
+    pub(crate) fn parse_throw(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // throw
+        let expr = self.parse_expr()?;
+        self.expect(&TokenKind::Semi, "`;` after `throw`")?;
+        Ok(Stmt::Throw(expr))
     }
 }

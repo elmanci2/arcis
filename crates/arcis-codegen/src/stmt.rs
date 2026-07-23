@@ -35,6 +35,11 @@ pub(crate) fn emit(out: &mut String, stmt: &Stmt, level: usize, ctx: &Ctx) {
         Stmt::For { init, condition, update, body } => {
             emit_for(out, init.as_deref(), condition.as_ref(), update.as_deref(), body, level, ctx)
         }
+        Stmt::Switch { discriminant, cases } => emit_switch(out, discriminant, cases, level, ctx),
+        Stmt::Try { body, catch_name, catch_body } => {
+            emit_try(out, body, catch_name.as_deref(), catch_body, level, ctx)
+        }
+        Stmt::Throw(expr) => emit_throw(out, expr, level, ctx),
         Stmt::Break => {
             crate::types::indent(out, level);
             out.push_str("break;\n");
@@ -60,6 +65,10 @@ pub(crate) fn emit(out: &mut String, stmt: &Stmt, level: usize, ctx: &Ctx) {
         Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {
             // Module structure (mod/use/pub) was emitted outside `emit_stmt`.
         }
+        Stmt::TypeAlias { .. } | Stmt::Interface { .. } | Stmt::Enum { .. } => {
+            // Type-only / enum declarations were emitted as top-level items
+            // by `module.rs`; nothing to do at statement position.
+        }
     }
 }
 
@@ -83,15 +92,17 @@ fn emit_let(
     }
     out.push_str(name);
     if let Some(t) = ty {
-        out.push_str(": ");
-        out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
+        if !crate::types::is_any(t) {
+            out.push_str(": ");
+            out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
+        }
     }
     out.push_str(" = ");
     // Special case: `let x: T[] = []` — `vec![]` does not infer T, so we
     // emit `Vec::new()` and let the declared type guide inference (Rust
     // fills in the generic parameter).
     if let (Some(t), arcis_ast::Expr::ArrayLiteral { elements }) = (ty, value) {
-        if elements.is_empty() && t.is_array {
+        if elements.is_empty() && t.is_array() {
             out.push_str("Vec::new()");
             out.push_str(";\n");
             return;
@@ -103,6 +114,7 @@ fn emit_let(
         current_let_type: ty,
         current_return_type: None,
         is_root: ctx.is_root,
+        enum_names: ctx.enum_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -123,12 +135,14 @@ fn emit_const(
     out.push_str("let ");
     out.push_str(name);
     if let Some(t) = ty {
-        out.push_str(": ");
-        out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
+        if !crate::types::is_any(t) {
+            out.push_str(": ");
+            out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
+        }
     }
     out.push_str(" = ");
     if let (Some(t), arcis_ast::Expr::ArrayLiteral { elements }) = (ty, value) {
-        if elements.is_empty() && t.is_array {
+        if elements.is_empty() && t.is_array() {
             out.push_str("Vec::new()");
             out.push_str(";\n");
             return;
@@ -140,6 +154,7 @@ fn emit_const(
         current_let_type: ty,
         current_return_type: None,
         is_root: ctx.is_root,
+        enum_names: ctx.enum_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -206,6 +221,7 @@ fn emit_return(
             current_let_type: ctx.current_return_type,
             current_return_type: None,
             is_root: ctx.is_root,
+            enum_names: ctx.enum_names,
         };
         crate::expr::emit(out, e, &nested);
     }
@@ -238,6 +254,130 @@ fn emit_if(
         out.push('}');
     }
     out.push('\n');
+}
+
+/// `switch (d) { case v1: A case v2: B default: C }` -> an `if`/`else if`
+/// chain comparing `d` with `==` against each case's values, ending in a
+/// bare `else` for `default`. Deliberately NOT a Rust `match`: Arcis
+/// `number` is `f64`, and Rust match patterns reject float literals — an
+/// `==`-based chain sidesteps that entirely and works uniformly for
+/// numbers, strings, booleans, and enum variants.
+fn emit_switch(
+    out: &mut String,
+    discriminant: &arcis_ast::Expr,
+    cases: &[arcis_ast::SwitchCase],
+    level: usize,
+    ctx: &Ctx,
+) {
+    crate::types::indent(out, level);
+    out.push_str("{\n");
+    crate::types::indent(out, level + 1);
+    out.push_str("let __arcis_switch = ");
+    crate::expr::emit(out, discriminant, ctx);
+    out.push_str(";\n");
+
+    let mut first = true;
+    let mut default_case: Option<&arcis_ast::SwitchCase> = None;
+    for case in cases {
+        if case.is_default {
+            default_case = Some(case);
+            continue;
+        }
+        crate::types::indent(out, level + 1);
+        out.push_str(if first { "if " } else { "else if " });
+        first = false;
+        for (i, v) in case.values.iter().enumerate() {
+            if i > 0 {
+                out.push_str(" || ");
+            }
+            out.push_str("__arcis_switch == ");
+            crate::expr::emit(out, v, ctx);
+        }
+        out.push_str(" {\n");
+        emit_switch_case_body(out, &case.body, level + 2, ctx);
+        crate::types::indent(out, level + 1);
+        out.push_str("}\n");
+    }
+    if let Some(case) = default_case {
+        crate::types::indent(out, level + 1);
+        out.push_str(if first { "{\n" } else { "else {\n" });
+        emit_switch_case_body(out, &case.body, level + 2, ctx);
+        crate::types::indent(out, level + 1);
+        out.push_str("}\n");
+    }
+    crate::types::indent(out, level);
+    out.push_str("}\n");
+}
+
+/// `throw expr;` -> `panic!("{}", expr);`. Every Arcis primitive
+/// (`string`/`number`/`boolean`) implements Rust's `Display`, so this works
+/// regardless of the thrown value's type — no need for the `+`-operator's
+/// string-literal heuristic.
+fn emit_throw(out: &mut String, expr: &arcis_ast::Expr, level: usize, ctx: &Ctx) {
+    crate::types::indent(out, level);
+    out.push_str("panic!(\"{}\", ");
+    crate::expr::emit(out, expr, ctx);
+    out.push_str(");\n");
+}
+
+/// `try { body } catch (e) { catch_body }` -> `std::panic::catch_unwind`.
+///
+/// Caveats (documented in `docs/language-reference.md`, not hidden):
+/// - Uses `AssertUnwindSafe`, which sidesteps Rust's `UnwindSafe` check —
+///   genuinely unsound if `body` mutates state observed after the catch.
+///   Low-risk for Arcis's typical `String`/`Vec`/primitive locals.
+/// - `body` is wrapped in a closure, so `return`/`break`/`continue` inside
+///   a `try` block do not propagate to the enclosing function/loop the way
+///   they would in TypeScript — `rustc` will reject `break`/`continue`
+///   there outright, and a `return` would (silently, incorrectly) only
+///   return from the closure.
+fn emit_try(
+    out: &mut String,
+    body: &[Stmt],
+    catch_name: Option<&str>,
+    catch_body: &[Stmt],
+    level: usize,
+    ctx: &Ctx,
+) {
+    crate::types::indent(out, level);
+    out.push_str("match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n");
+    for s in body {
+        emit(out, s, level + 1, ctx);
+    }
+    crate::types::indent(out, level);
+    out.push_str("})) {\n");
+    crate::types::indent(out, level + 1);
+    out.push_str("Ok(_) => {}\n");
+    crate::types::indent(out, level + 1);
+    out.push_str("Err(__arcis_panic) => {\n");
+    if let Some(name) = catch_name {
+        crate::types::indent(out, level + 2);
+        out.push_str(&format!(
+            "let {name} = __arcis_panic.downcast_ref::<String>().cloned().or_else(|| __arcis_panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| String::from(\"unknown error\"));\n"
+        ));
+    }
+    for s in catch_body {
+        emit(out, s, level + 2, ctx);
+    }
+    crate::types::indent(out, level + 1);
+    out.push_str("}\n");
+    crate::types::indent(out, level);
+    out.push_str("}\n");
+}
+
+/// Emit a switch case's body, treating a top-level `break;` as a no-op:
+/// each case already ends its own `if`/`else` arm (no Rust loop or labeled
+/// block wraps it), so a literal `break;` there would be invalid Rust
+/// ("cannot break outside of a loop"). A `break` inside a loop *nested*
+/// within the case is unaffected — that loop emits its own body via `emit`,
+/// not this function.
+fn emit_switch_case_body(out: &mut String, body: &[Stmt], level: usize, ctx: &Ctx) {
+    for s in body {
+        if matches!(s, Stmt::Break) {
+            continue;
+        }
+        emit(out, s, level, ctx);
+    }
 }
 
 fn emit_while(

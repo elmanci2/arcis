@@ -1,0 +1,41 @@
+// shadowing.tsr — redeclaring the same name in a nested block scope.
+// Covers: if-block shadowing, while-block shadowing, and shadowing inside
+// a function that also has a top-level `main` variable of the same name.
+
+// ============================================================
+// 1. Shadowing inside an if-block
+// ============================================================
+let x: number = 1;
+print("outer x before if: " + x);
+
+if (true) {
+    let x: number = 2;
+    print("inner x inside if: " + x);
+}
+
+print("outer x after if: " + x);   // must still be 1
+
+// ============================================================
+// 2. Shadowing inside a while-block
+// ============================================================
+let count: number = 0;
+while (count < 2) {
+    let count: string = "shadowed";
+    print("inner count: " + count);
+    count = count + " again";
+    break;
+}
+print("outer count after while: " + count);   // must still be 0
+
+// ============================================================
+// 3. A function parameter shadowing a name used in `main`
+// ============================================================
+let value: number = 100;
+
+function double(value: number): number {
+    return value * 2;
+}
+
+print("main value: " + value);              // 100
+print("double(5): " + double(5));           // 10
+print("main value after call: " + value);   // still 100

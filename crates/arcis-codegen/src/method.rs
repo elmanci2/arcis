@@ -37,7 +37,7 @@ pub(crate) fn emit(
             crate::expr::emit(out, object, ctx);
             out.push_str(".iter().find(|&&x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x");
+                crate::builtin::emit_callback_call(out, cb, "x", ctx);
             }
             out.push_str(").cloned().unwrap_or_default()");
             true
@@ -46,7 +46,7 @@ pub(crate) fn emit(
             crate::expr::emit(out, object, ctx);
             out.push_str(".iter().filter(|&&x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x");
+                crate::builtin::emit_callback_call(out, cb, "x", ctx);
             }
             out.push_str(").cloned().collect()");
             true
@@ -55,7 +55,7 @@ pub(crate) fn emit(
             crate::expr::emit(out, object, ctx);
             out.push_str(".iter().map(|&x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call(out, cb, "x");
+                crate::builtin::emit_callback_call(out, cb, "x", ctx);
             }
             out.push_str(").collect()");
             true
@@ -68,7 +68,7 @@ pub(crate) fn emit(
             }
             out.push_str(", |acc, &x| ");
             if let Some(cb) = args.first() {
-                crate::builtin::emit_callback_call2(out, cb, "acc", "x");
+                crate::builtin::emit_callback_call2(out, cb, "acc", "x", ctx);
             }
             out.push(')');
             true

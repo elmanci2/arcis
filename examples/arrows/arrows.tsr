@@ -1,0 +1,41 @@
+// arrows.tsr — arrow function expressions (no variable capture).
+// Covers: expression-body form, block-body form, and usage as inline
+// callbacks for array methods.
+
+// ============================================================
+// 1. Expression-body arrow, assigned to a variable
+// ============================================================
+let double = (x: number): number => x * 2;
+print("double(21) = " + double(21));
+
+// ============================================================
+// 2. Block-body arrow
+// ============================================================
+let classify = (n: number): string => {
+    if (n < 0) {
+        return "negative";
+    }
+    return "non-negative";
+};
+print("classify(-5) = " + classify(-5));
+print("classify(5) = " + classify(5));
+
+// ============================================================
+// 3. Arrow with no explicit return type (inferred by rustc)
+// ============================================================
+let square = (x: number) => x * x;
+print("square(6) = " + square(6));
+
+// ============================================================
+// 4. Inline arrow as a callback for array methods
+// ============================================================
+let nums: number[] = [-3, -1, 2, 5, 7, -10, 8];
+
+let positives: number[] = nums.filter((x: number): boolean => x > 0);
+print("positives.length: " + positives.length);   // 4
+
+let doubled: number[] = nums.map((x: number): number => x * 2);
+print("doubled[0]: " + doubled[0]);                // -6
+
+let total: number = nums.reduce((acc: number, x: number): number => acc + x, 0);
+print("total: " + total);                          // 8

@@ -1,0 +1,26 @@
+// error-handling.tsr — try/catch/throw.
+// Covers: throwing a string message, catching it and reading the message,
+// and code after a caught error continuing to run normally.
+
+function checkAge(age: number): string {
+    if (age < 0) {
+        throw "age cannot be negative";
+    }
+    return "age is valid";
+}
+
+try {
+    let result: string = checkAge(25);
+    print("Result: " + result);
+} catch (e) {
+    print("Caught (unexpected): " + e);
+}
+
+try {
+    let result: string = checkAge(-5);
+    print("Result: " + result);
+} catch (e) {
+    print("Caught: " + e);
+}
+
+print("Program continues after the try/catch.");

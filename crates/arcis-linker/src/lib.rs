@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 /// A loaded module: its id (= file stem), canonical path, AST, and the
 /// exports it offers (used by the codegen to emit cross-module references).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub id: String,
     pub path: PathBuf,

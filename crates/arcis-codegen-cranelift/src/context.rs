@@ -58,6 +58,8 @@ pub(crate) struct FunctionCtx {
     /// use (e.g. marking runtime allocations as mutable).
     #[allow(dead_code)]
     reassigned: HashSet<String>,
+    /// enum name -> (variant name -> numeric value), from `collect::collect_enums`.
+    enums: HashMap<String, HashMap<String, f64>>,
     /// Stack of nested loops.
     loops: Vec<LoopFrame>,
     /// Map from literal bytes → Cranelift `DataId`. Populated lazily on
@@ -70,7 +72,7 @@ pub(crate) struct FunctionCtx {
 }
 
 impl FunctionCtx {
-    pub fn new(reassigned: &HashSet<String>) -> Self {
+    pub fn new(reassigned: &HashSet<String>, enums: &HashMap<String, HashMap<String, f64>>) -> Self {
         Self {
             vars: HashMap::new(),
             currents: HashMap::new(),
@@ -78,11 +80,22 @@ impl FunctionCtx {
             element_types: HashMap::new(),
             object_field_types: HashMap::new(),
             reassigned: reassigned.clone(),
+            enums: enums.clone(),
             loops: Vec::new(),
             string_literals: HashMap::new(),
             string_literal_counter: 0,
             var_counter: 0,
         }
+    }
+
+    /// `true` if `name` is a declared `enum`.
+    pub(crate) fn is_enum_name(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
+
+    /// The numeric value of `enum_name.variant_name`, if both exist.
+    pub(crate) fn enum_variant_value(&self, enum_name: &str, variant_name: &str) -> Option<f64> {
+        self.enums.get(enum_name)?.get(variant_name).copied()
     }
 
     pub fn define(&mut self, name: &str, ty: ArcisType, init: Value, builder: &mut cranelift_frontend::FunctionBuilder<'_>) -> Variable {
@@ -123,10 +136,10 @@ impl FunctionCtx {
     }
 
     /// Register an object's field types from its Type annotation.
-    pub(crate) fn set_object_fields(&mut self, name: &str, fields: &[(String, Box<arcis_ast::Type>)]) {
+    pub(crate) fn set_object_fields(&mut self, name: &str, fields: &[(String, Box<arcis_ast::Type>, bool)]) {
         let mut map = HashMap::new();
-        for (fname, fty) in fields {
-            if let Ok(at) = crate::types::from_ast(&fty.name, fty.is_array) {
+        for (fname, fty, _optional) in fields {
+            if let Ok(at) = crate::types::from_ast(fty) {
                 map.insert(fname.clone(), at);
             }
         }

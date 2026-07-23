@@ -93,8 +93,35 @@ pub(crate) fn collect_uses(stmt: &Stmt, used: &mut HashSet<String>) {
                 collect_uses(s, used);
             }
         }
+        Stmt::Switch { discriminant, cases } => {
+            collect_uses_expr(discriminant, used);
+            for case in cases {
+                for v in &case.values {
+                    collect_uses_expr(v, used);
+                }
+                for s in &case.body {
+                    collect_uses(s, used);
+                }
+            }
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                collect_uses(s, used);
+            }
+            for s in catch_body {
+                collect_uses(s, used);
+            }
+        }
+        Stmt::Throw(expr) => collect_uses_expr(expr, used),
         Stmt::Break | Stmt::Continue => {}
-        Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportDecl(_) | Stmt::ExportSpec(_) | Stmt::ExportDefault(_) => {}
+        Stmt::Import { .. }
+        | Stmt::FromImport { .. }
+        | Stmt::ExportDecl(_)
+        | Stmt::ExportSpec(_)
+        | Stmt::ExportDefault(_)
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. }
+        | Stmt::Enum { .. } => {}
         Stmt::Expr(expr) => collect_uses_expr(expr, used),
     }
 }
@@ -126,12 +153,20 @@ fn collect_uses_expr(expr: &Expr, used: &mut HashSet<String>) {
         }
         Expr::ArrayLiteral { elements } => {
             for e in elements {
-                collect_uses_expr(e, used);
+                match e {
+                    arcis_ast::ArrayElement::Item(e) | arcis_ast::ArrayElement::Spread(e) => {
+                        collect_uses_expr(e, used)
+                    }
+                }
             }
         }
         Expr::ObjectLiteral { fields } => {
-            for (_, v) in fields {
-                collect_uses_expr(v, used);
+            for f in fields {
+                match f {
+                    arcis_ast::ObjectField::KV(_, v) | arcis_ast::ObjectField::Spread(v) => {
+                        collect_uses_expr(v, used)
+                    }
+                }
             }
         }
         Expr::Path { segments } => {
@@ -141,10 +176,23 @@ fn collect_uses_expr(expr: &Expr, used: &mut HashSet<String>) {
                 used.insert(s.clone());
             }
         }
-        Expr::TypeOf(inner) => {
+        Expr::TypeOf(inner)
+        | Expr::AsConst(inner)
+        | Expr::NonNullAssertion(inner) => {
             collect_uses_expr(inner, used);
         }
-        Expr::Number(_) | Expr::String(_) | Expr::Bool(_) => {}
+        Expr::AsAssertion { expr, .. } => {
+            collect_uses_expr(expr, used);
+        }
+        Expr::Arrow { body, .. } => match body {
+            arcis_ast::ArrowBody::Expr(e) => collect_uses_expr(e, used),
+            arcis_ast::ArrowBody::Block(stmts) => {
+                for s in stmts {
+                    collect_uses(s, used);
+                }
+            }
+        },
+        Expr::Number(_) | Expr::String(_) | Expr::Bool(_) | Expr::Null | Expr::Undefined => {}
     }
 }
 

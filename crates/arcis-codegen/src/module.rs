@@ -23,6 +23,8 @@ pub(crate) fn generate(
     is_root: bool,
     modules: &[Module],
     all_obj_types: &[Type],
+    enums: &[(String, Vec<(String, Option<i64>)>)],
+    enum_names: &HashSet<String>,
     path_to_id: &HashMap<std::path::PathBuf, String>,
 ) -> Result<String, String> {
     let mut out = String::new();
@@ -36,9 +38,11 @@ pub(crate) fn generate(
         current_let_type: None,
         current_return_type: None,
         is_root,
+        enum_names,
     };
 
-    // The root declares every sub-module and defines the object-type structs.
+    // The root declares every sub-module and defines the object-type
+    // structs and enums.
     if is_root {
         for other in modules.iter().skip(1) {
             out.push_str(&format!("mod {};\n", other.id));
@@ -46,6 +50,9 @@ pub(crate) fn generate(
         out.push('\n');
         for ty in all_obj_types {
             crate::types::emit_struct_def(&mut out, ty);
+        }
+        for (name, variants) in enums {
+            crate::types::emit_enum_def(&mut out, name, variants);
         }
     }
 
@@ -260,7 +267,7 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
     }
     out.push_str(" = ");
     if let (Some(t), Expr::ArrayLiteral { elements }) = (ty, value) {
-        if elements.is_empty() && t.is_array {
+        if elements.is_empty() && t.is_array() {
             out.push_str("Vec::new();\n\n");
             return;
         }
@@ -271,6 +278,7 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
         current_let_type: ty.as_ref(),
         current_return_type: None,
         is_root: ctx.is_root,
+        enum_names: ctx.enum_names,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n\n");

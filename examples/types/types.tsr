@@ -1,0 +1,52 @@
+// types.tsr — TypeScript "Everyday Types" demo: unions, literal types,
+// type aliases, interfaces (with extends), optional fields, any, and the
+// type-assertion / non-null operators.
+//
+// NOTE on unions: Arcis has no runtime type checker — annotations are
+// compile-time-only, same as TypeScript's own erasure model. A union
+// `A | B` therefore lowers to the Rust type of its FIRST member, so pick
+// the member order to match how the value is actually produced at runtime
+// (this is why the literal-union example below sticks to same-shaped
+// string literals, mirroring TypeScript's own "string enum" pattern).
+// ============================================================
+// 1. Literal type unions ("string enum" pattern)
+// ============================================================
+function printAligned(text: string, alignment: "left" | "right" | "center"): void {
+  print(text + " [" + alignment + "]");
+} printAligned("Hello", "left");
+printAligned("World", "center"); // ============================================================
+// 2. Type aliases
+// ============================================================
+type ID = string;
+type Point = { x: number, y: number };
+
+let userId: ID = "user-42";
+print("User id: " + userId);
+
+let origin: Point = { x: 0, y: 0 };
+print("Origin: (" + origin.x + ", " + origin.y + ")"); // ============================================================
+// 3. Interfaces, including `extends`
+// ============================================================
+interface Animal { name: string;
+} interface Dog extends Animal { breed: string;
+} let rex: Dog = { name: "Rex", breed: "Labrador" };
+print(rex.name + " is a " + rex.breed); // ============================================================
+// 4. Optional properties (`?`)
+// ============================================================
+let bob: { first: string, last ?: string } = { first: "Bob" };
+print("First: " + bob.first); // ============================================================
+// 5. `any`
+// ============================================================
+let anything: any = "could be anything";
+print("Anything: " + anything); // ============================================================
+// 6. Type assertions, `as const`, and non-null assertion
+// ============================================================
+let maybeNumber: number = 42;
+let asserted: number = maybeNumber as number;
+print("Asserted: " + asserted);
+
+let notNull: number = maybeNumber !;
+print("Not null: " + notNull);
+
+let frozen = 100 as const;
+print("Frozen: " + frozen);

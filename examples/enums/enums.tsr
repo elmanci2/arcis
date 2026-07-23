@@ -1,0 +1,40 @@
+// enums.tsr — TypeScript-style numeric enums.
+// Covers: default auto-increment values, explicit values, variant access,
+// and using an enum-typed parameter.
+
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+enum StatusCode {
+    Ok = 200,
+    NotFound = 404,
+    ServerError = 500
+}
+
+function describe(d: Direction): string {
+    if (d == Direction.Up) {
+        return "going up";
+    } else {
+        if (d == Direction.Down) {
+            return "going down";
+        } else {
+            return "going sideways";
+        }
+    }
+}
+
+let dir: Direction = Direction.Up;
+print("Direction.Up: " + describe(dir));
+
+dir = Direction.Down;
+print("Direction.Down: " + describe(dir));
+
+dir = Direction.Left;
+print("Direction.Left: " + describe(dir));
+
+let code: StatusCode = StatusCode.NotFound;
+print("StatusCode.NotFound == 404? " + (code == StatusCode.NotFound));

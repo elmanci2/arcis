@@ -15,13 +15,72 @@
 //!
 //! Each level calls the level below until it reaches an atom.
 
-use arcis_ast::{BinOp, Expr, UnaryOp};
+use arcis_ast::{ArrayElement, ArrowBody, BinOp, Expr, ObjectField, Param, UnaryOp};
 use arcis_lexer::TokenKind;
 
 use crate::error::ParseError;
 use crate::state::Parser;
 
 impl Parser {
+    /// Attempt to parse an arrow-function parameter list and body,
+    /// starting right after an already-consumed `(`. Returns `Ok(None)`
+    /// (never an `Err`) on any syntactic mismatch — including a garbled
+    /// partial match — so the caller can cleanly roll back and retry as a
+    /// grouped expression instead. Parameters require an explicit type
+    /// annotation, same as `function` declarations (Arcis has no
+    /// parameter-type inference); this is also what disambiguates
+    /// `(x: number) => ...` from a grouped expression `(x)`.
+    fn try_parse_arrow_after_lparen(&mut self) -> Result<Option<Expr>, ParseError> {
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RParen) {
+            loop {
+                let pname_tok = match self.peek_kind() {
+                    TokenKind::Ident(_) => self.advance(),
+                    _ => return Ok(None),
+                };
+                let pname = match &pname_tok.kind {
+                    TokenKind::Ident(s) => s.clone(),
+                    _ => unreachable!(),
+                };
+                if !self.check(&TokenKind::Colon) {
+                    return Ok(None);
+                }
+                self.advance(); // :
+                let Ok(pty) = self.parse_type() else { return Ok(None) };
+                params.push(Param { name: pname, ty: pty, line: pname_tok.line, col: pname_tok.col });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        if !self.check(&TokenKind::RParen) {
+            return Ok(None);
+        }
+        self.advance(); // )
+        let return_type = if self.matches(&TokenKind::Colon) {
+            let Ok(ty) = self.parse_type() else { return Ok(None) };
+            Some(ty)
+        } else {
+            None
+        };
+        if !self.check(&TokenKind::FatArrow) {
+            return Ok(None);
+        }
+        self.advance(); // =>
+        let body = if self.check(&TokenKind::LBrace) {
+            self.advance(); // {
+            let mut stmts = Vec::new();
+            while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                stmts.push(self.parse_stmt()?);
+            }
+            self.expect(&TokenKind::RBrace, "`}` closing arrow function body")?;
+            ArrowBody::Block(stmts)
+        } else {
+            ArrowBody::Expr(Box::new(self.parse_expr()?))
+        };
+        Ok(Some(Expr::Arrow { params, return_type, body }))
+    }
+
     /// Top-level expression entry point.
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_or()
@@ -210,6 +269,28 @@ impl Parser {
                         args,
                     };
                 }
+                // Non-null assertion: `expr!`. Distinct from prefix `!`
+                // (logical not), which is only ever consumed in
+                // `parse_unary` before we get here.
+                TokenKind::Bang => {
+                    self.advance();
+                    expr = Expr::NonNullAssertion(Box::new(expr));
+                }
+                // Type assertion: `expr as Type` or the const assertion
+                // `expr as const`.
+                TokenKind::As => {
+                    self.advance();
+                    if self.check(&TokenKind::Const) {
+                        self.advance();
+                        expr = Expr::AsConst(Box::new(expr));
+                    } else {
+                        let ty = self.parse_type()?;
+                        expr = Expr::AsAssertion {
+                            expr: Box::new(expr),
+                            ty,
+                        };
+                    }
+                }
                 _ => break,
             }
         }
@@ -222,6 +303,8 @@ impl Parser {
             TokenKind::Number(n) => Ok(Expr::Number(n)),
             TokenKind::String(s) => Ok(Expr::String(s)),
             TokenKind::Bool(b) => Ok(Expr::Bool(b)),
+            TokenKind::Null => Ok(Expr::Null),
+            TokenKind::Undefined => Ok(Expr::Undefined),
             TokenKind::Ident(name) => {
                 // Static path: `crate::Type::method`. Only valid at the start
                 // of an expression (not chained off another expression).
@@ -278,17 +361,30 @@ impl Parser {
                 }
             }
             TokenKind::LParen => {
+                // Try an arrow-function parameter list first: `(params)
+                // [: ReturnType] => body`. On any mismatch, roll back and
+                // fall through to the existing grouped-expression parse —
+                // `(` already-consumed position is `after_lparen`.
+                let after_lparen = self.pos;
+                if let Some(arrow) = self.try_parse_arrow_after_lparen()? {
+                    return Ok(arrow);
+                }
+                self.pos = after_lparen;
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, "`)` after grouped expression")?;
                 Ok(expr)
             }
             TokenKind::LBracket => {
-                // Array literal: `[expr, expr, ...]` or `[]`.
+                // Array literal: `[expr, ...spread, expr]` or `[]`.
                 // The `[` was already consumed by `self.advance()` above.
                 let mut elements = Vec::new();
                 if !self.check(&TokenKind::RBracket) {
                     loop {
-                        elements.push(self.parse_expr()?);
+                        if self.matches(&TokenKind::DotDotDot) {
+                            elements.push(ArrayElement::Spread(self.parse_expr()?));
+                        } else {
+                            elements.push(ArrayElement::Item(self.parse_expr()?));
+                        }
                         if !self.matches(&TokenKind::Comma) {
                             break;
                         }
@@ -298,23 +394,27 @@ impl Parser {
                 Ok(Expr::ArrayLiteral { elements })
             }
             TokenKind::LBrace => {
-                // Object literal: `{ key: expr, ... }`.
+                // Object literal: `{ key: expr, ...spread }`.
                 // Must be in a context with a declared type (let/const); the
                 // codegen infers the type from that context.
                 let mut fields = Vec::new();
                 if !self.check(&TokenKind::RBrace) {
                     loop {
-                        let key_tok = self.expect(
-                            &TokenKind::Ident(String::new()),
-                            "field name in object literal",
-                        )?;
-                        let key = match &key_tok.kind {
-                            TokenKind::Ident(s) => s.clone(),
-                            _ => unreachable!(),
-                        };
-                        self.expect(&TokenKind::Colon, "`:` after field name")?;
-                        let value = self.parse_expr()?;
-                        fields.push((key, value));
+                        if self.matches(&TokenKind::DotDotDot) {
+                            fields.push(ObjectField::Spread(self.parse_expr()?));
+                        } else {
+                            let key_tok = self.expect(
+                                &TokenKind::Ident(String::new()),
+                                "field name in object literal",
+                            )?;
+                            let key = match &key_tok.kind {
+                                TokenKind::Ident(s) => s.clone(),
+                                _ => unreachable!(),
+                            };
+                            self.expect(&TokenKind::Colon, "`:` after field name")?;
+                            let value = self.parse_expr()?;
+                            fields.push(ObjectField::KV(key, value));
+                        }
                         if !self.matches(&TokenKind::Comma) {
                             break;
                         }

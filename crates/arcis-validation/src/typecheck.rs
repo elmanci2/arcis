@@ -180,20 +180,20 @@ fn check_stmt(
                 scope.insert(name.clone(), t);
             }
         }
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { name, value, line, col } => {
             if let Some(t) = scope.get(name).cloned() {
-                check_sink(value, &t, &format!("`{name}`"), scope, env, out, 0, 0);
+                check_sink(value, &t, &format!("`{name}`"), scope, env, out, *line, *col);
             }
         }
-        Stmt::AssignIndex { object, index: _, value } => {
+        Stmt::AssignIndex { object, index: _, value, line, col } => {
             if let Some(Type::Array(elem)) = scope.get(object).cloned() {
-                check_sink(value, &elem, &format!("an element of `{object}`"), scope, env, out, 0, 0);
+                check_sink(value, &elem, &format!("an element of `{object}`"), scope, env, out, *line, *col);
             }
         }
-        Stmt::AssignMember { object, property, value } => {
+        Stmt::AssignMember { object, property, value, line, col } => {
             let field_expr = Expr::Member { object: object.clone(), property: property.clone() };
             if let Some(field_ty) = infer::expr_type(&field_expr, scope, env) {
-                check_sink(value, &field_ty, &format!("field `.{property}`"), scope, env, out, 0, 0);
+                check_sink(value, &field_ty, &format!("field `.{property}`"), scope, env, out, *line, *col);
             }
         }
         Stmt::Function(f) => check_function(f, scope, env, out),

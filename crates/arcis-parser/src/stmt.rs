@@ -51,6 +51,8 @@ impl Parser {
                     Some(TokenKind::LBracket) | Some(TokenKind::Dot)
                 );
                 if next_is_index_or_member {
+                    let lhs_tok = self.peek();
+                    let (lhs_line, lhs_col) = (lhs_tok.line, lhs_tok.col);
                     let expr = self.parse_expr()?;
                     if self.check(&TokenKind::Eq) {
                         match expr {
@@ -71,6 +73,8 @@ impl Parser {
                                     object: name,
                                     index: *index,
                                     value,
+                                    line: lhs_line,
+                                    col: lhs_col,
                                 });
                             }
                             Expr::Member { object, property } => {
@@ -81,6 +85,8 @@ impl Parser {
                                     object,
                                     property,
                                     value,
+                                    line: lhs_line,
+                                    col: lhs_col,
                                 });
                             }
                             _ => {
@@ -116,6 +122,7 @@ impl Parser {
     /// Plain assignment: `IDENT = expr;`
     pub(crate) fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
         let name_tok = self.advance(); // Ident
+        let (line, col) = (name_tok.line, name_tok.col);
         let name = match &name_tok.kind {
             TokenKind::Ident(s) => s.clone(),
             _ => unreachable!("parse_assign called without an Ident"),
@@ -123,13 +130,14 @@ impl Parser {
         self.expect(&TokenKind::Eq, "`=` after name")?;
         let value = self.parse_expr()?;
         self.expect(&TokenKind::Semi, "`;` after value")?;
-        Ok(Stmt::Assign { name, value })
+        Ok(Stmt::Assign { name, value, line, col })
     }
 
     /// Like [`parse_assign`](Self::parse_assign) but does not consume the
     /// trailing `;`. Used for the `update` slot of a C-style `for`.
     pub(crate) fn parse_assign_no_semi(&mut self) -> Result<Stmt, ParseError> {
         let name_tok = self.advance();
+        let (line, col) = (name_tok.line, name_tok.col);
         let name = match &name_tok.kind {
             TokenKind::Ident(s) => s.clone(),
             _ => unreachable!(),
@@ -141,11 +149,11 @@ impl Parser {
             self.expect(&TokenKind::RBracket, "`]` in indexed assignment")?;
             self.expect(&TokenKind::Eq, "`=` in indexed assignment")?;
             let value = self.parse_expr()?;
-            return Ok(Stmt::AssignIndex { object: name, index, value });
+            return Ok(Stmt::AssignIndex { object: name, index, value, line, col });
         }
         self.expect(&TokenKind::Eq, "`=` after name")?;
         let value = self.parse_expr()?;
-        Ok(Stmt::Assign { name, value })
+        Ok(Stmt::Assign { name, value, line, col })
     }
 
     /// `let` / `const` declaration. `is_const` distinguishes the two.

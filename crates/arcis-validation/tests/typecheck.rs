@@ -2,9 +2,15 @@
 //!
 //! Mirrors the driver's pipeline: lex → parse → infer → check.
 
-use arcis_validation::{check_types, infer_program, TypeEnv};
+use arcis_validation::{check_types, infer_program, TypeEnv, TypeMismatchIssue};
 
 fn check(src: &str) -> Result<(), Vec<String>> {
+    check_issues(src)
+        .map(|_| ())
+        .map_err(|issues| issues.into_iter().map(|i| i.message).collect())
+}
+
+fn check_issues(src: &str) -> Result<(), Vec<TypeMismatchIssue>> {
     let tokens = arcis_lexer::lex(src).expect("lex");
     let mut program = arcis_parser::parse(tokens).expect("parse");
     let mut env = TypeEnv::default();
@@ -14,7 +20,7 @@ fn check(src: &str) -> Result<(), Vec<String>> {
     if issues.is_empty() {
         Ok(())
     } else {
-        Err(issues.into_iter().map(|i| i.message).collect())
+        Err(issues)
     }
 }
 
@@ -26,6 +32,41 @@ fn rejects_reassigning_an_inferred_number_to_a_string() {
     // once inferred, must not silently become mutable.
     let src = "let numero = 4;\nnumero = \"\";";
     assert!(check(src).is_err());
+}
+
+#[test]
+fn mismatch_is_reported_at_the_reassignment_not_the_declaration() {
+    // Regression test for a real follow-up bug report: the error used to
+    // be anchored at `Stmt::Assign`'s hardcoded (0, 0) — which, on a
+    // document where the `let` happens to be on line 1, LOOKED like it
+    // was pointing at the declaration instead of the actual violation.
+    // `Stmt::Assign`/`AssignIndex`/`AssignMember` now carry their own
+    // `line`/`col` (the start of the assignment statement itself).
+    let src = "let numero = 4;\n\nnumero = \"\";\n";
+    let issues = check_issues(src).expect_err("expected a type mismatch");
+    assert_eq!(issues.len(), 1);
+    // 1-indexed source position: `numero = "";` is on line 3, column 1 —
+    // NOT line 1 (the `let`).
+    assert_eq!(issues[0].line, 3, "wrong line: {:?}", issues[0]);
+    assert_eq!(issues[0].col, 1, "wrong col: {:?}", issues[0]);
+}
+
+#[test]
+fn indexed_assignment_mismatch_reported_at_the_assignment() {
+    let src = "let xs: number[] = [1, 2, 3];\n\nxs[0] = \"nope\";\n";
+    let issues = check_issues(src).expect_err("expected a type mismatch");
+    assert_eq!(issues[0].line, 3, "wrong line: {:?}", issues[0]);
+}
+
+#[test]
+fn field_assignment_mismatch_reported_at_the_assignment() {
+    let src = "
+        let p: { name: string, age: number } = { name: \"Ana\", age: 3 };
+
+        p.age = \"old\";
+    ";
+    let issues = check_issues(src).expect_err("expected a type mismatch");
+    assert_eq!(issues[0].line, 4, "wrong line: {:?}", issues[0]);
 }
 
 #[test]

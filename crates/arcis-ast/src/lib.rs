@@ -92,17 +92,30 @@ pub enum Stmt {
     Assign {
         name: String,
         value: Expr,
+        /// Position of `name` — the start of the assignment statement.
+        /// Lets diagnostics (e.g. a type-mismatch checker) point at the
+        /// actual reassignment, not fall back to the variable's original
+        /// `let`/`const` declaration site.
+        line: usize,
+        col: usize,
     },
     AssignIndex {
         object: String,
         index: Expr,
         value: Expr,
+        /// Position of `object` — see [`Stmt::Assign`]'s `line`/`col`.
+        line: usize,
+        col: usize,
     },
     /// Field assignment: `obj.field = value` or `arr[i].field = v`.
     AssignMember {
         object: Box<Expr>,
         property: String,
         value: Expr,
+        /// Position of the start of `object` — see [`Stmt::Assign`]'s
+        /// `line`/`col`.
+        line: usize,
+        col: usize,
     },
     Function(Function),
     Return(Option<Expr>),

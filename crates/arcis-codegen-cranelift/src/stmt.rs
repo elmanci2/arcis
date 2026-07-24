@@ -82,12 +82,12 @@ pub(crate) fn emit_stmt(
             }
             Ok(())
         }
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { name, value, .. } => {
             let (v, _) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
             fctx.rebind(name, v, builder);
             Ok(())
         }
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::AssignIndex { object, index, value, .. } => {
             let (obj_val, _) = expr::emit(builder, fctx, &Expr::Ident(object.clone()), runtime, user_fns, module)?;
             let (idx_val, _) = expr::emit(builder, fctx, index, runtime, user_fns, module)?;
             let (val_v, val_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
@@ -98,7 +98,7 @@ pub(crate) fn emit_stmt(
             fctx.rebind(object, obj_val, builder);
             Ok(())
         }
-        Stmt::AssignMember { object, property, value } => {
+        Stmt::AssignMember { object, property, value, .. } => {
             let (obj_val, _) = expr::emit(builder, fctx, object, runtime, user_fns, module)?;
             let (val_v, val_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
             let i64_val = crate::expr::promote_to_i64(builder, val_v, val_ty);

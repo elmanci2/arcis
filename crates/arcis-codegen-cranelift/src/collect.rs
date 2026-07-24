@@ -27,13 +27,13 @@ fn visit_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
         Stmt::Assign { name, .. } => {
             out.insert(name.clone());
         }
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::AssignIndex { object, index, value, .. } => {
             // `arr[i] = val` mutates `arr`.
             out.insert(object.clone());
             visit_expr(index, out);
             visit_expr(value, out);
         }
-        Stmt::AssignMember { object, property: _, value } => {
+        Stmt::AssignMember { object, property: _, value, .. } => {
             // `obj.field = val` — if object is an ident, mutate it.
             mark_ident_mutated(object, out);
             visit_expr(value, out);

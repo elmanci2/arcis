@@ -111,13 +111,13 @@ fn rename_in_block(stmts: &mut [Stmt], from: &str, to: &str) {
 fn rename_in_stmt(stmt: &mut Stmt, from: &str, to: &str) {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Const { value, .. } => rename_in_expr(value, from, to),
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { name, value, .. } => {
             rename_in_expr(value, from, to);
             if name == from {
                 *name = to.to_string();
             }
         }
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::AssignIndex { object, index, value, .. } => {
             rename_in_expr(index, from, to);
             rename_in_expr(value, from, to);
             if object == from {

@@ -92,13 +92,13 @@ fn rewrite_stmt(stmt: &mut Stmt, scopes: &mut Vec<Scope>, counters: &mut HashMap
             rewrite_expr(value, scopes);
             *name = declare(scopes, counters, name);
         }
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { name, value, .. } => {
             rewrite_expr(value, scopes);
             if let Some(mapped) = resolve(scopes, name) {
                 *name = mapped;
             }
         }
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::AssignIndex { object, index, value, .. } => {
             rewrite_expr(index, scopes);
             rewrite_expr(value, scopes);
             if let Some(mapped) = resolve(scopes, object) {

@@ -14,11 +14,11 @@ pub(crate) fn emit(out: &mut String, stmt: &Stmt, level: usize, ctx: &Ctx) {
         Stmt::Const { name, ty, value, .. } => {
             emit_const(out, name, ty.as_ref(), value, level, ctx)
         }
-        Stmt::Assign { name, value } => emit_assign(out, name, value, level, ctx),
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::Assign { name, value, .. } => emit_assign(out, name, value, level, ctx),
+        Stmt::AssignIndex { object, index, value, .. } => {
             emit_assign_index(out, object, index, value, level, ctx)
         }
-        Stmt::AssignMember { object, property, value } => {
+        Stmt::AssignMember { object, property, value, .. } => {
             emit_assign_member(out, object, property, value, level, ctx)
         }
         Stmt::Function(_) => {

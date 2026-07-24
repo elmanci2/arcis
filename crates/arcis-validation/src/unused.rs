@@ -36,11 +36,11 @@ pub(crate) fn collect_uses(stmt: &Stmt, used: &mut HashSet<String>) {
         Stmt::Let { value, .. } | Stmt::Const { value, .. } => {
             collect_uses_expr(value, used);
         }
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { name, value, .. } => {
             used.insert(name.clone());
             collect_uses_expr(value, used);
         }
-        Stmt::AssignIndex { object, index, value } => {
+        Stmt::AssignIndex { object, index, value, .. } => {
             used.insert(object.clone());
             collect_uses_expr(index, used);
             collect_uses_expr(value, used);

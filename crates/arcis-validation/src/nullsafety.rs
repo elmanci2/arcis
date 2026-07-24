@@ -276,24 +276,24 @@ fn check_stmt(
                 scope.insert(name.clone(), t.clone());
             }
         }
-        Stmt::Assign { name, value } => {
-            check_expr(value, scope, env, out, 0, 0);
+        Stmt::Assign { name, value, line, col } => {
+            check_expr(value, scope, env, out, *line, *col);
             if let Some(t) = scope.get(name).cloned() {
-                check_sink(value, &t, &format!("assigned to `{name}`"), scope, env, out, 0, 0);
+                check_sink(value, &t, &format!("assigned to `{name}`"), scope, env, out, *line, *col);
             }
         }
-        Stmt::AssignIndex { index, value, .. } => {
-            check_expr(index, scope, env, out, 0, 0);
-            check_expr(value, scope, env, out, 0, 0);
+        Stmt::AssignIndex { index, value, line, col, .. } => {
+            check_expr(index, scope, env, out, *line, *col);
+            check_expr(value, scope, env, out, *line, *col);
         }
-        Stmt::AssignMember { object, value, .. } => {
-            check_expr(object, scope, env, out, 0, 0);
-            check_expr(value, scope, env, out, 0, 0);
+        Stmt::AssignMember { object, value, line, col, .. } => {
+            check_expr(object, scope, env, out, *line, *col);
+            check_expr(value, scope, env, out, *line, *col);
             if !is_definite(object, scope, env) {
                 out.push(issue(
                     "a field is assigned on a possibly-missing value — resolve it with `?? fallback`, a null check, or `!` first.".to_string(),
-                    0,
-                    0,
+                    *line,
+                    *col,
                 ));
             }
         }

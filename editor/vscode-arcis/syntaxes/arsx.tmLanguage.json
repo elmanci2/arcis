@@ -1,0 +1,50 @@
+{
+  "name": "Arcis JSX",
+  "scopeName": "source.arcis.arsx",
+  "fileTypes": ["arsx"],
+  "patterns": [
+    { "include": "#jsx-tag" },
+    { "include": "source.arcis" }
+  ],
+  "repository": {
+    "jsx-tag": {
+      "name": "meta.tag.arsx",
+      "begin": "(</?)([A-Za-z_][A-Za-z0-9_.-]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.arsx" },
+        "2": { "name": "entity.name.tag.arsx" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.arsx" }
+      },
+      "patterns": [{ "include": "#jsx-attribute" }]
+    },
+    "jsx-attribute": {
+      "patterns": [
+        {
+          "name": "entity.other.attribute-name.arsx",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_-]*\\b(?=\\s*=)"
+        },
+        {
+          "name": "keyword.operator.assignment.arsx",
+          "match": "="
+        },
+        {
+          "name": "string.quoted.double.arsx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.arsx", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "meta.embedded.expression.arsx",
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [{ "include": "source.arcis" }]
+        }
+      ]
+    }
+  }
+}

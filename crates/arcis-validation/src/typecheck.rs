@@ -24,8 +24,10 @@
 //! and any type this pass can't fully resolve are treated as compatible
 //! with anything — false negatives (a real mismatch slipping through) are
 //! an acceptable trade-off against false positives (rejecting valid code
-//! this pass doesn't fully understand yet). `any` and `null`/`undefined`
-//! always pass (the latter is [`crate::nullsafety`]'s job to police).
+//! this pass doesn't fully understand yet). A bare `null`/`undefined`
+//! always passes (that's [`crate::nullsafety`]'s job to police). Arcis has
+//! no `any` type at all — the parser rejects it, so there's nothing here to
+//! special-case for it.
 //!
 //! ## Sinks checked
 //!
@@ -70,10 +72,6 @@ fn is_void(t: &Type) -> bool {
     matches!(t, Type::Primitive(p) if p == "void")
 }
 
-fn is_any(t: &Type) -> bool {
-    matches!(t, Type::Primitive(p) if p == "any")
-}
-
 /// The primitive "kind" of a type, if it's a plain primitive or a literal
 /// type (a literal always narrows to exactly one primitive kind). `None`
 /// for anything structurally more complex (object, function, union,
@@ -95,9 +93,6 @@ fn primitive_kind(t: &Type) -> Option<String> {
 fn types_compatible(expected: &Type, actual: &Type) -> bool {
     let expected = expected.unwrap_optional();
     let actual = actual.unwrap_optional();
-    if is_any(expected) || is_any(actual) {
-        return true;
-    }
     // A bare `null`/`undefined` into a non-optional slot is
     // `nullsafety`'s guarantee to police, not this pass's.
     if matches!(actual, Type::Null | Type::Undefined) {

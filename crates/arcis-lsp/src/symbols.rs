@@ -240,7 +240,7 @@ fn resolve_alias_shape(
 /// Lex + parse + run type inference over `text`. The returned program has
 /// missing annotations (let/const types, for-of element types, function
 /// return types) filled in wherever they can be deduced, so symbol details
-/// show `let x: number` instead of `let x: any` for unannotated bindings.
+/// show `let x: number` instead of `let x: unknown` for unannotated bindings.
 /// `None` when the document doesn't currently lex/parse.
 pub fn parse_and_infer(text: &str) -> Option<Program> {
     let tokens = arcis_lexer::lex(text).ok()?;
@@ -353,7 +353,7 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
 
         // ── for-of ────────────────────────────────────────────────
         Stmt::ForOf { name, ty, iterable, body } => {
-            let detail = ty.as_ref().map(type_label).unwrap_or_else(|| "any".to_string());
+            let detail = ty.as_ref().map(type_label).unwrap_or_else(|| "unknown".to_string());
             push_ty(out, name.clone(), SymbolKind::LoopVar, 0, 0, detail, ty.clone());
             collect_expr(iterable, out);
             for s in body {
@@ -634,10 +634,10 @@ fn collect_expr(expr: &Expr, out: &mut Vec<Symbol>) {
 
 // ── Descriptive-string helpers (shared by completion / hover) ──────────
 
-/// `"<type>"` if annotated, `"any"` otherwise (matches the wording used
+/// `"<type>"` if annotated, `"unknown"` otherwise (matches the wording used
 /// for un-annotated `let`/`const` bindings).
 fn describe_binding(ty: &Option<Type>) -> String {
-    ty.as_ref().map(type_label).unwrap_or_else(|| "any".to_string())
+    ty.as_ref().map(type_label).unwrap_or_else(|| "unknown".to_string())
 }
 
 fn describe_interface(extends: &[String], fields: &[(String, Box<Type>, bool)]) -> String {

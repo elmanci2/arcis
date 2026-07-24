@@ -858,8 +858,8 @@ pub(crate) fn promote_to_string(
             Ok(builder.inst_results(call)[0])
         }
         // Matches JavaScript's String() on these values. `object` also
-        // covers `any`-typed values whose concrete type couldn't be
-        // inferred — printing a placeholder beats refusing to compile.
+        // covers named types this pass couldn't resolve to a concrete
+        // shape — printing a placeholder beats refusing to compile.
         ArcisType::Void => emit_string_literal(builder, fctx, module, "undefined", runtime),
         ArcisType::Array => emit_string_literal(builder, fctx, module, "[array]", runtime),
         ArcisType::Object => emit_string_literal(builder, fctx, module, "[object Object]", runtime),

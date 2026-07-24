@@ -1,6 +1,7 @@
 // types.tsr — TypeScript "Everyday Types" demo: unions, literal types,
-// type aliases, interfaces (with extends), optional fields, any, and the
-// type-assertion / non-null operators.
+// type aliases, interfaces (with extends), optional fields, and the
+// type-assertion / non-null operators. Arcis is strongly typed and has
+// no `any` escape hatch — every binding needs a concrete or inferred type.
 //
 // NOTE on unions: Arcis has no runtime type checker — annotations are
 // compile-time-only, same as TypeScript's own erasure model. A union
@@ -35,11 +36,7 @@ print(rex.name + " is a " + rex.breed); // =====================================
 // ============================================================
 let bob: { first: string, last ?: string } = { first: "Bob" };
 print("First: " + bob.first); // ============================================================
-// 5. `any`
-// ============================================================
-let anything: any = "could be anything";
-print("Anything: " + anything); // ============================================================
-// 6. Type assertions, `as const`, and non-null assertion
+// 5. Type assertions, `as const`, and non-null assertion
 // ============================================================
 let maybeNumber: number = 42;
 let asserted: number = maybeNumber as number;

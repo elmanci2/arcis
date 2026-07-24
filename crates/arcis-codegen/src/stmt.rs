@@ -92,10 +92,8 @@ fn emit_let(
     }
     out.push_str(name);
     if let Some(t) = ty {
-        if !crate::types::is_any(t) {
-            out.push_str(": ");
-            out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
-        }
+        out.push_str(": ");
+        out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
     }
     out.push_str(" = ");
     // Special case: `let x: T[] = []` — `vec![]` does not infer T, so we
@@ -138,10 +136,8 @@ fn emit_const(
     out.push_str("let ");
     out.push_str(name);
     if let Some(t) = ty {
-        if !crate::types::is_any(t) {
-            out.push_str(": ");
-            out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
-        }
+        out.push_str(": ");
+        out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
     }
     out.push_str(" = ");
     if let (Some(t), arcis_ast::Expr::ArrayLiteral { elements }) = (ty, value) {

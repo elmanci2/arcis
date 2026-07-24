@@ -1,7 +1,9 @@
 //! Type parsing.
 //!
 //! Supports the "Everyday Types" subset of TypeScript:
-//! - Primitive type keywords: `string`, `number`, `boolean`, `void`, `any`
+//! - Primitive type keywords: `string`, `number`, `boolean`, `void`
+//!   (`any` is deliberately NOT supported — Arcis is strongly typed and
+//!   rejects it with a parse error)
 //! - `null` and `undefined`
 //! - Named (user-defined) types: any identifier (type alias / interface name)
 //! - Inline object types: `{ name: type, opt?: type, ... }` — given a
@@ -118,7 +120,13 @@ impl Parser {
             TokenKind::TypeNumber => Type::Primitive("number".to_string()),
             TokenKind::TypeBoolean => Type::Primitive("boolean".to_string()),
             TokenKind::TypeVoid => Type::Primitive("void".to_string()),
-            TokenKind::TypeAny => Type::Primitive("any".to_string()),
+            TokenKind::TypeAny => {
+                return Err(ParseError {
+                    line: t.line,
+                    col: t.col,
+                    msg: "`any` is not a valid type — Arcis is strongly typed; give this a concrete type instead".to_string(),
+                });
+            }
             TokenKind::Null => Type::Null,
             TokenKind::Undefined => Type::Undefined,
             TokenKind::String(s) => Type::Literal(LiteralValue::String(s.clone())),

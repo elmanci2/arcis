@@ -367,10 +367,12 @@ pub enum LiteralValue {
 /// the old flat struct can be ported incrementally.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    /// `string`, `number`, `boolean`, `void`, `any`, `bigint`, `symbol`, or
-    /// any bare identifier used in a type position that isn't otherwise
+    /// `string`, `number`, `boolean`, `void`, `bigint`, `symbol`, or any
+    /// bare identifier used in a type position that isn't otherwise
     /// recognised (kept as `Named` normally — this variant is only for the
-    /// built-in primitive keywords).
+    /// built-in primitive keywords). Arcis is strongly typed and has no
+    /// `any` — the parser rejects it outright, so this variant can never
+    /// hold `"any"`.
     Primitive(String),
     /// `null`
     Null,
@@ -418,9 +420,6 @@ impl Type {
     }
     pub fn void() -> Self {
         Type::Primitive("void".into())
-    }
-    pub fn any() -> Self {
-        Type::Primitive("any".into())
     }
     pub fn array(inner: Type) -> Self {
         Type::Array(Box::new(inner))

@@ -132,10 +132,6 @@ fn is_void(t: &Type) -> bool {
     matches!(t, Type::Primitive(p) if p == "void")
 }
 
-fn is_any(t: &Type) -> bool {
-    matches!(t, Type::Primitive(p) if p == "any")
-}
-
 /// The type of a literal expression (no scope needed).
 fn literal_type(e: &Expr) -> Option<Type> {
     match e {
@@ -269,24 +265,6 @@ fn infer_expr_annotations(e: &mut Expr, scope: &Scope, env: &TypeEnv) {
             }
         }
         Expr::Call { callee, args } => {
-            // Inline array-method callback: type its parameter from the
-            // receiver's element type before descending.
-            if let Expr::Member { object, property } = callee.as_mut() {
-                if matches!(property.as_str(), "map" | "filter" | "find" | "reduce") {
-                    let elem = expr_type(object, scope, env)
-                        .and_then(|t| t.array_inner().cloned());
-                    if let (Some(elem), Some(Expr::Arrow { params, .. })) =
-                        (elem, args.first_mut())
-                    {
-                        // reduce's callback is (acc, x) — x is the LAST param.
-                        if let Some(p) = params.last_mut() {
-                            if is_any(&p.ty) {
-                                p.ty = elem;
-                            }
-                        }
-                    }
-                }
-            }
             infer_expr_annotations(callee, scope, env);
             for a in args.iter_mut() {
                 infer_expr_annotations(a, scope, env);
@@ -356,9 +334,8 @@ fn infer_stmt(stmt: &mut Stmt, scope: &mut Scope, env: &TypeEnv) {
     infer_stmt_exprs(stmt, scope, env);
     match stmt {
         Stmt::Let { name, ty, value, .. } | Stmt::Const { name, ty, value, .. } => {
-            if ty.is_none() || ty.as_ref().map(is_any).unwrap_or(false) {
+            if ty.is_none() {
                 if let Some(t) = expr_type(value, scope, env) {
-                    // Don't overwrite an explicit `any` with `void`-ish types.
                     if !is_void(&t) {
                         *ty = Some(t);
                     }
@@ -581,7 +558,7 @@ fn call_type(callee: &Expr, args: &[Expr], scope: &Scope, env: &TypeEnv) -> Opti
             // Array methods.
             "map" => {
                 // Element type = callback return.
-                let cb_ret = args.first().and_then(|cb| callback_return(cb, object, scope, env));
+                let cb_ret = args.first().and_then(|cb| callback_return(cb, scope, env));
                 cb_ret.map(Type::array)
             }
             "filter" => recv.filter(|t| t.is_array()),
@@ -589,7 +566,7 @@ fn call_type(callee: &Expr, args: &[Expr], scope: &Scope, env: &TypeEnv) -> Opti
             "reduce" => args
                 .get(1)
                 .and_then(|init| expr_type(init, scope, env))
-                .or_else(|| args.first().and_then(|cb| callback_return(cb, object, scope, env))),
+                .or_else(|| args.first().and_then(|cb| callback_return(cb, scope, env))),
             "pop" => recv.as_ref().and_then(|t| t.array_inner().cloned()),
             "push" | "unshift" => Some(Type::number()),
             // String methods.
@@ -607,23 +584,16 @@ fn call_type(callee: &Expr, args: &[Expr], scope: &Scope, env: &TypeEnv) -> Opti
 
 /// The return type of a `.map`/`.reduce` callback: a named function's
 /// (declared or inferred) return type, or an inline arrow's.
-fn callback_return(cb: &Expr, receiver: &Expr, scope: &Scope, env: &TypeEnv) -> Option<Type> {
+fn callback_return(cb: &Expr, scope: &Scope, env: &TypeEnv) -> Option<Type> {
     match cb {
         Expr::Ident(fname) => env.return_type_of(fname).filter(|t| !is_void(t)),
         Expr::Arrow { params, return_type, body } => {
             if let Some(rt) = return_type {
                 return Some(rt.clone());
             }
-            // Bind the arrow parameter to the receiver's element type.
             let mut s = scope.clone();
-            let elem = expr_type(receiver, scope, env).and_then(|t| t.array_inner().cloned());
             for p in params {
-                let t = if is_any(&p.ty) {
-                    elem.clone().unwrap_or_else(|| p.ty.clone())
-                } else {
-                    p.ty.clone()
-                };
-                s.insert(p.name.clone(), t);
+                s.insert(p.name.clone(), p.ty.clone());
             }
             match body {
                 ArrowBody::Expr(e) => expr_type(e, &s, env),

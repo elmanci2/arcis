@@ -127,7 +127,7 @@ type         = union_type ;
 union_type   = intersection_type ( "|" intersection_type )* ;
 intersection_type = postfix_type ( "&" postfix_type )* ;
 postfix_type = primary_type "[]"* "?"? ;                      -- trailing `?` makes it optional
-primary_type = "string" | "number" | "boolean" | "void" | "any"
+primary_type = "string" | "number" | "boolean" | "void"
              | "null" | "undefined"
              | STRING | NUMBER | "true" | "false"                -- literal types
              | IDENT                                              -- named (alias / interface)
@@ -173,7 +173,7 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | Interfaces             | ✔ `interface X { ... }`, `extends` (multiple, merged fields) — emits a named `pub struct` |
 | Optional properties    | ✔ `{ name?: string }` → `Option<T>` field, filled with `None` when omitted; `field?: T` is exactly `field: T?` — see "Null safety" |
 | Optional types (`T?`) / `??` / null safety | ✔ **compile-time enforced** on both backends — every optional value must be resolved (`?? fallback`, a narrowing null-check, or `!`) before it reaches a place that expects a guaranteed value, or the build fails. See the dedicated "Null safety" section below. |
-| `any`                  | ✔ `let`/`const` bindings skip the Rust annotation (inferred from the initializer); function params/returns lower to `Box<dyn Any>` |
+| `any`                  | — deliberately unsupported: Arcis is strongly typed and the parser rejects `any` wherever a type is expected, with a dedicated error message |
 | `null` / `undefined`   | ✔ parsed as types and expressions; erase to `()` **except** where they populate a `T?` slot — see "Null safety" |
 | Type assertions (`as`) | ✔ `expr as Type` — compile-time only, no runtime effect (matches TS) |
 | `as const`             | ✔ parsed and erased the same way as `as Type` |
@@ -194,7 +194,7 @@ primary_type = "string" | "number" | "boolean" | "void" | "any"
 | Closures (capturing variables) | — (arrow functions above are non-capturing only) |
 | `bigint` literals (`100n`) | —          |
 | Async                | —                |
-| Cranelift backend: interfaces / object shapes | ✔ interfaces and type aliases are resolved before codegen (same pass as the Rust backend); object field accesses (`p.name`, `arr[i].name`, for-of variables, nested `a.b.c`) are typed from the declared/inferred shape. `any` prefers the initializer's inferred type; unions erase to the first member. |
+| Cranelift backend: interfaces / object shapes | ✔ interfaces and type aliases are resolved before codegen (same pass as the Rust backend); object field accesses (`p.name`, `arr[i].name`, for-of variables, nested `a.b.c`) are typed from the declared/inferred shape. Unions erase to the first member. |
 | Cranelift backend: `continue`/`break` inside an `if` nested in a `for-of` loop | ✔ fixed — `continue` now routes through a dedicated increment block (it used to re-test the same element forever). |
 | Cranelift backend: printing `object`-typed values | ✔ promotes to `"[object Object]"` (JS-style) instead of erroring. |
 
@@ -209,7 +209,6 @@ equivalents:
 | `number` | `f64`          |
 | `boolean`| `bool`         |
 | `void`   | `()`           |
-| `any`    | `Box<dyn std::any::Any>` (function params/returns); no annotation on `let`/`const` (inferred) |
 | `null`, `undefined` (as a type on their own) | `()` |
 | `T?`     | `Option<T>` — see "Null safety" below |
 | `T[]`    | `Vec<T>`       |

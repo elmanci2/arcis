@@ -42,9 +42,6 @@ pub(crate) fn ts_type_to_rust(ty: &Type, is_root: bool) -> String {
             "number" => "f64".to_string(),
             "boolean" => "bool".to_string(),
             "void" => "()".to_string(),
-            // `any` has no runtime representation to erase to safely; a
-            // boxed dynamic value is the closest native equivalent.
-            "any" => "Box<dyn std::any::Any>".to_string(),
             "bigint" => "i64".to_string(),
             other => other.to_string(),
         },
@@ -115,7 +112,8 @@ pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
         _ => return,
     };
     // `Default` backs `.find()`'s not-found value and `.pop()` on empty
-    // arrays; `Debug` gives `any`-ish printing a fallback.
+    // arrays; `Debug` gives a printing fallback for values whose type
+    // couldn't be resolved to a `Display`-able primitive.
     out.push_str("#[derive(Clone, Debug, Default)]\n");
     out.push_str("pub struct ");
     out.push_str(name);
@@ -159,14 +157,6 @@ pub(crate) fn emit_enum_def(out: &mut String, name: &str, variants: &[(String, O
         next = v + 1;
     }
     out.push_str("}\n\n");
-}
-
-/// `true` for the `any` primitive. `let`/`const` bindings typed `any` skip
-/// the explicit Rust annotation (see [`crate::stmt`]) since there is no
-/// dynamic-value runtime to erase to — the initializer's own type flows
-/// through via ordinary Rust inference instead.
-pub(crate) fn is_any(ty: &Type) -> bool {
-    matches!(ty, Type::Primitive(n) if n == "any")
 }
 
 /// Append `level` levels (4-space) of indentation to `out`.

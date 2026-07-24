@@ -337,6 +337,19 @@ fn rejects_double_question_mark_in_type_position() {
 }
 
 #[test]
+fn rejects_any_as_a_type() {
+    // Arcis is strongly typed and deliberately has no `any` escape hatch —
+    // `any` must be rejected wherever a type is expected, not silently
+    // accepted as a dynamically-typed slot.
+    let tokens = arcis_lexer::lex("let x: any = 1;").unwrap();
+    let err = arcis_parser::parse(tokens).unwrap_err();
+    assert!(err.to_string().contains("any"), "expected error to mention `any`, got: {}", err);
+
+    let tokens = arcis_lexer::lex("function f(x: any): void {}").unwrap();
+    assert!(arcis_parser::parse(tokens).is_err());
+}
+
+#[test]
 fn optional_interface_field_folds_into_optional_type() {
     let tokens = arcis_lexer::lex("interface P { name: string, nickname?: string }").unwrap();
     let program = arcis_parser::parse(tokens).unwrap();

@@ -99,8 +99,8 @@ literals, `switch`/`case`, and `try`/`catch`/`throw`. See
 [`crates/arcis-codegen-cranelift/`](crates/arcis-codegen-cranelift/) for
 the implementation and [`docs/language-reference.md`](docs/language-reference.md)
 for backend-specific design notes and caveats (e.g. how `try`/`catch` is
-built on `setjmp`/`longjmp` there instead of `catch_unwind`). Unions,
-interfaces/type aliases used as object shapes, and `any` still erase the
+built on `setjmp`/`longjmp` there instead of `catch_unwind`). Unions and
+interfaces/type aliases used as object shapes still erase the
 same way as the Rust backend; closures-with-capture, destructuring,
 template literals, classes, and generics are not implemented in either
 backend yet.
@@ -292,7 +292,6 @@ The codegen emits Rust source using:
 | `number` | `f64`       |
 | `boolean`| `bool`      |
 | `void`   | `()`        |
-| `any`    | inferred on `let`/`const`; `Box<dyn Any>` on fn params/returns |
 | `null` / `undefined` | `()` |
 | `A \| B` / `A & B` | Rust type of the first member (see [`docs/language-reference.md`](docs/language-reference.md#type-erasure)) |
 | `type X = ...` | resolved away before codegen |
@@ -333,8 +332,9 @@ graph and pipeline diagram.
   generates the same code and `rustc` will complain. That is acceptable for a
   first iteration. This extends to the newer "everyday types" additions:
   union/intersection types erase to their first member's Rust type, and
-  `any`/`as`/`as const`/`!` have no runtime effect (matching TypeScript's own
-  erasure model).
+  `as`/`as const`/`!` have no runtime effect (matching TypeScript's own
+  erasure model). Arcis has no `any` type at all — the parser rejects it —
+  so this gap is narrower than TypeScript's own.
 - Shadowing is handled via an alpha-renaming pre-pass (not real lexical
   scoping in the generated code); closures that capture variables and
   first-class functions passed around as values are not implemented in

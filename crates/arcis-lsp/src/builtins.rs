@@ -178,8 +178,8 @@ pub static TOP_LEVEL_BUILTINS: &[Builtin] = &[
     Builtin {
         label: "print",
         kind: CompletionItemKind::FUNCTION,
-        detail: "(...values: any[]) -> void",
-        documentation: "Print each argument to stdout, separated by a space, terminated by a newline.",
+        detail: "(value) -> void",
+        documentation: "Print the value to stdout, terminated by a newline.",
     },
     Builtin {
         label: "input",
@@ -202,8 +202,8 @@ pub static TOP_LEVEL_BUILTINS: &[Builtin] = &[
     Builtin {
         label: "str",
         kind: CompletionItemKind::FUNCTION,
-        detail: "(value: any) -> string",
-        documentation: "Converts any value to its string representation. Use for explicit string concatenation.",
+        detail: "(value) -> string",
+        documentation: "Converts a value of any built-in type to its string representation. Use for explicit string concatenation.",
     },
     Builtin {
         label: "typeof",

@@ -1,7 +1,7 @@
 {
   "name": "arcis",
   "displayName": "Arcis",
-  "description": "Sintaxis y Language Server para archivos .tsr (Arcis → Rust).",
+  "description": "Sintaxis y Language Server para archivos .tsr (Arcis → Rust); resaltado JSX para archivos .arsx.",
   "version": "0.3.0",
   "publisher": "local",
   "icon": "assets/logo.svg",
@@ -9,7 +9,7 @@
     "vscode": "^1.60.0"
   },
   "categories": ["Programming Languages"],
-  "keywords": ["arcis", "typescript", "tsr", "language", "lsp"],
+  "keywords": ["arcis", "typescript", "tsr", "arsx", "jsx", "language", "lsp"],
   "activationEvents": ["onLanguage:arcis"],
   "main": "./out/extension.js",
   "scripts": {
@@ -26,6 +26,12 @@
         "aliases": ["Arcis", "arcis"],
         "extensions": [".tsr"],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "arcis-arsx",
+        "aliases": ["Arcis JSX", "arsx"],
+        "extensions": [".arsx"],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
@@ -33,6 +39,11 @@
         "language": "arcis",
         "scopeName": "source.arcis",
         "path": "./syntaxes/arcis.tmLanguage.json"
+      },
+      {
+        "language": "arcis-arsx",
+        "scopeName": "source.arcis.arsx",
+        "path": "./syntaxes/arsx.tmLanguage.json"
       }
     ],
     "iconThemes": [

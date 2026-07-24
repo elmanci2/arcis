@@ -92,10 +92,6 @@ pub(crate) fn from_ast(ty: &AstType, enum_names: &std::collections::HashSet<Stri
             "boolean" => Ok(ArcisType::Boolean),
             "string" => Ok(ArcisType::String),
             "void" => Ok(ArcisType::Void),
-            // `any` has no fixed representation; treat as an opaque handle
-            // like other aggregates until the Cranelift backend grows a
-            // real tagged-value runtime.
-            "any" => Ok(ArcisType::Object),
             other => Err(format!("unsupported type `{}` for the Cranelift backend", other)),
         },
         AstType::Literal(arcis_ast::LiteralValue::String(_)) => Ok(ArcisType::String),

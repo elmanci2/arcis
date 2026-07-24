@@ -52,13 +52,9 @@ pub(crate) fn emit_stmt(
         }
         Stmt::Let { name, ty, value, .. } | Stmt::Const { name, ty, value, .. } => {
             let (v, inferred_ty) = expr::emit(builder, fctx, value, runtime, user_fns, module)?;
-            // `any` has no fixed representation — the initializer's own
-            // inferred type is strictly more precise, so prefer it (the
-            // Rust backend does the same by dropping the annotation).
-            let is_any = matches!(ty, Some(arcis_ast::Type::Primitive(p)) if p == "any");
             let resolved = match ty {
-                Some(t) if !is_any => from_ast(t, fctx.enum_names())?,
-                _ => inferred_ty,
+                Some(t) => from_ast(t, fctx.enum_names())?,
+                None => inferred_ty,
             };
             // `let x: T? = null;` — the literal has no meaningful bits of
             // its own; swap it for `resolved`'s real "missing" sentinel.

@@ -133,28 +133,6 @@ fn accepts_bigint_and_number_interchangeably() {
 }
 
 #[test]
-fn any_annotation_collapses_to_the_initializers_concrete_type() {
-    // `let x: any = 1;` is NOT a dynamically-typed slot in this
-    // compiler: `infer_program` (a pre-existing, intentional design
-    // decision — see `arcis-codegen/src/types.rs`'s `is_any` doc
-    // comment) rewrites the annotation to the initializer's own inferred
-    // type ("any" skips the Rust `Box<dyn Any>` erasure and just uses
-    // the real type). So `x` here is REALLY `number` underneath, and
-    // reassigning it to a `string` is a genuine mismatch — confirmed via
-    // `git stash`: this exact snippet crashed the Cranelift backend
-    // before this checker existed, for the same underlying reason
-    // (`declared type of variable var0 doesn't match type of value v2`).
-    let src = "let x: any = 1;\nx = \"now a string\";\nprint(x);";
-    assert!(check(src).is_err());
-}
-
-#[test]
-fn any_annotated_field_still_accepts_its_own_initializer_type() {
-    let src = "let x: any = 1;\nx = 2;\nprint(x);";
-    assert!(check(src).is_ok());
-}
-
-#[test]
 fn accepts_enum_member_stored_in_enum_typed_field() {
     let src = "
         enum Color { Red, Green, Blue }

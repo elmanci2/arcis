@@ -191,7 +191,7 @@ fn rename_in_expr(e: &mut Expr, from: &str, to: &str) {
                 *name = to.to_string();
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             rename_in_expr(callee, from, to);
             for a in args {
                 rename_in_expr(a, from, to);

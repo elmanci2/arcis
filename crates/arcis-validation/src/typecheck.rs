@@ -156,6 +156,9 @@ fn type_label(t: &Type) -> String {
         Type::Union(_) => "union".to_string(),
         Type::Intersection(_) => "intersection".to_string(),
         Type::Function { .. } => "function".to_string(),
+        Type::Generic { name, args } => {
+            format!("{}<{}>", name, args.iter().map(type_label).collect::<Vec<_>>().join(", "))
+        }
     }
 }
 

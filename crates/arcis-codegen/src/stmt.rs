@@ -116,6 +116,7 @@ fn emit_let(
         namespace_names: ctx.namespace_names,
         env: ctx.env,
         type_scope: ctx.type_scope,
+        struct_fields: ctx.struct_fields,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -157,6 +158,7 @@ fn emit_const(
         namespace_names: ctx.namespace_names,
         env: ctx.env,
         type_scope: ctx.type_scope,
+        struct_fields: ctx.struct_fields,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n");
@@ -212,6 +214,17 @@ fn emit_return(
 ) {
     crate::types::indent(out, level);
     out.push_str("return");
+    // Special case, same as `let x: T[] = []` in `emit_let`/`emit_const`:
+    // `vec![]` does not infer T, and an empty array literal's OWN codegen
+    // defaults to `Vec::<f64>::new()` absent any other context — wrong for
+    // any non-number (or generic `T[]`) return type. Emit `Vec::new()` and
+    // let the function's declared return type guide Rust's inference.
+    if let Some(arcis_ast::Expr::ArrayLiteral { elements }) = expr {
+        if elements.is_empty() && ctx.current_return_type.map(|t| t.is_array()).unwrap_or(false) {
+            out.push_str(" Vec::new();\n");
+            return;
+        }
+    }
     if let Some(e) = expr {
         out.push(' ');
         // For `return { ... };` inside a function whose declared return
@@ -227,6 +240,7 @@ fn emit_return(
             namespace_names: ctx.namespace_names,
                 env: ctx.env,
             type_scope: ctx.type_scope,
+        struct_fields: ctx.struct_fields,
         };
         // `return` a genuinely definite value where the function's return
         // type is `T?` (`Option<T>` in Rust) — wrap it. A value that's

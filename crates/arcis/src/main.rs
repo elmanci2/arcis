@@ -13,10 +13,13 @@
 //!
 //! ## Backends
 //!
-//! - `cranelift` (default): lower directly to Cranelift IR, link with the
-//!   system `cc` against `libc`. **Does not** require a Rust toolchain.
-//! - `rust`: lower to Rust source, compile with `rustc`/`cargo`.
-//!   Requires a Rust toolchain installed.
+//! - `rust` (default): lower to Rust source, compile with `rustc`/`cargo`.
+//!   Requires a Rust toolchain installed. Generics (`function f<T>(...)`,
+//!   `interface Box<T>`, `type Pair<A,B>`) only work on this backend.
+//! - `cranelift`: lower directly to Cranelift IR, link with the system `cc`
+//!   against `libc`. **Does not** require a Rust toolchain, but does not
+//!   support generics — a program that uses them fails with a clear error
+//!   telling you to pass `--backend rust`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -42,16 +45,16 @@ enum Commands {
     Build {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `cranelift` (default, no rustc needed) or `rust` (needs rustc).
-        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
+        /// Codegen backend: `rust` (default, needs rustc) or `cranelift` (no rustc, no generics).
+        #[arg(long, value_name = "BACKEND", default_value = "rust")]
         backend: String,
     },
     /// Compile and execute the binary
     Run {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `cranelift` (default, no rustc needed) or `rust` (needs rustc).
-        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
+        /// Codegen backend: `rust` (default, needs rustc) or `cranelift` (no rustc, no generics).
+        #[arg(long, value_name = "BACKEND", default_value = "rust")]
         backend: String,
     },
     /// Only emit the source files (without invoking the final compiler) and
@@ -59,8 +62,8 @@ enum Commands {
     Check {
         /// Path to the .tsr file or directory (default `.` → searches `main.tsr`).
         file: Option<PathBuf>,
-        /// Codegen backend: `cranelift` (default) or `rust` (dumps Rust source).
-        #[arg(long, value_name = "BACKEND", default_value = "cranelift")]
+        /// Codegen backend: `rust` (default, dumps Rust source) or `cranelift`.
+        #[arg(long, value_name = "BACKEND", default_value = "rust")]
         backend: String,
     },
     /// Initialise a new Arcis project (creates `main.tsr` with a "Hello"

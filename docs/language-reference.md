@@ -36,8 +36,9 @@ statement    = let_stmt
              | import_stmt
              | export_stmt ;
 
-type_alias_stmt = "type" IDENT "=" type ";" ;
-interface_stmt  = "interface" IDENT ( "extends" IDENT ( "," IDENT )* )?
+type_param_list = "<" IDENT ( "," IDENT )* ">" ;                 -- generics (Rust backend only)
+type_alias_stmt = "type" IDENT type_param_list? "=" type ";" ;
+interface_stmt  = "interface" IDENT type_param_list? ( "extends" IDENT ( "," IDENT )* )?
                    "{" ( IDENT "?"? ":" type ( ( "," | ";" ) IDENT "?"? ":" type )* ( "," | ";" )? )? "}" ;
 enum_stmt    = "enum" IDENT "{" ( IDENT ( "=" NUMBER )? ( "," IDENT ( "=" NUMBER )? )* ","? )? "}" ;
 
@@ -50,7 +51,7 @@ throw_stmt   = "throw" expression ";" ;
 let_stmt     = "let"  IDENT ( ":" type )? "=" expression ";" ;
 const_stmt   = "const" IDENT ( ":" type )? "=" expression ";" ;
 
-function_stmt = "function" IDENT
+function_stmt = "function" IDENT type_param_list?
                 "(" params? ")"
                 ( ":" type )?
                 "{" statement* "}" ;
@@ -112,7 +113,8 @@ postfix      = atom ( "." IDENT | "[" expression "]" | "(" args? ")"
                      | "as" ( "const" | type )                   -- type / const assertion
                      )* ;
 atom         = NUMBER | STRING | "true" | "false" | "null" | "undefined"
-             | IDENT ( "::" IDENT )* ( "(" args? ")" )?    -- identifier or path / call
+             | IDENT type_args? ( "(" args? ")" )?          -- identifier / call, optional turbofish
+             | IDENT ( "::" IDENT )+ ( "(" args? ")" )?      -- static path / call
              | "(" expression ")"
              | arrow_fn
              | "[" ( array_element ( "," array_element )* )? "]"
@@ -122,6 +124,14 @@ arrow_fn     = "(" ( IDENT ":" type ( "," IDENT ":" type )* )? ")" ( ":" type )?
                "=>" ( expression | "{" statement* "}" ) ;
 array_element = expression | "..." expression ;
 object_field  = IDENT ":" expression | "..." expression ;
+-- Explicit turbofish type args at a call site: `identity<number>(5)`. Only
+-- valid on a bare-identifier call (not a chained `.method()` or `a::b()`
+-- path call). Needed when a type param appears only in the return type and
+-- can't be inferred from the arguments. `<` here is ambiguous with the `<`
+-- comparison operator; the parser resolves it by attempting this production
+-- and rolling back to an ordinary comparison on any mismatch — see
+-- `crates/arcis-parser/src/expr.rs`'s `try_parse_call_type_args`.
+type_args    = "<" type ( "," type )* ">" ;
 
 type         = union_type ;
 union_type   = intersection_type ( "|" intersection_type )* ;
@@ -130,7 +140,7 @@ postfix_type = primary_type "[]"* "?"? ;                      -- trailing `?` ma
 primary_type = "string" | "number" | "boolean" | "void"
              | "null" | "undefined"
              | STRING | NUMBER | "true" | "false"                -- literal types
-             | IDENT                                              -- named (alias / interface)
+             | IDENT ( "<" type ( "," type )* ">" )?              -- named (alias / interface), optionally parameterized
              | "{" ( IDENT "?"? ":" type ( "," IDENT "?"? ":" type )* )? "}"
              | "(" ( IDENT ":" type ( "," IDENT ":" type )* )? ")" "=>" type ;
 ```
@@ -188,7 +198,8 @@ primary_type = "string" | "number" | "boolean" | "void"
 | Array-method callbacks (`.find`/`.filter`/`.map`/`.reduce`) | ✔ Cranelift backend builds a real loop (blocks + `brif` + indirect-free direct calls) rather than splicing the callback inline the way the Rust backend does — this was a **pre-existing gap** (0% implemented) closed in the same pass as the six features above, not a new feature of its own |
 | Type checker         | — (relies on `rustc` today; annotations are not verified) |
 | Classes              | —                |
-| Generics             | —                |
+| Generics             | ✔ **Rust backend only.** `function f<T>(x: T): T { ... }`, `interface Box<T> { value: T }`, `type Pair<A, B> = { first: A, second: B }`. Call sites infer type args from arguments (`f(5)`) or accept explicit turbofish (`f<number>(5)`) for params that only appear in the return type. No Arcis-side monomorphization — real Rust generics are emitted and `rustc` does the rest. The Cranelift backend rejects any generic construct with a clear error (`--backend cranelift` + generics = build error, not a silent miscompile) |
+| Native JSON (`json(path)`) | ✔ **Rust backend only.** A literal path (`json("./data.json")`) is read and its shape inferred **at compile time** (nested objects/arrays/primitives), the same way an object literal's type is inferred — no hand-written interface, full field-access checking, real editor autocomplete. A non-literal path requires `json<T>(path)` naming an already-declared interface. Resolved **relative to the process's working directory**, matching `sys.readFile`'s existing runtime convention (not module-relative). Runtime deserialization uses `serde`/`serde_json`, auto-added to `Cargo.toml` (needs a Cargo.toml next to the entry file — the direct-rustc layout can't pull in external crates at all). Cranelift rejects `json(...)` with a clear error, same as generics |
 | Destructuring (`const {x,y} = obj`) | — |
 | Template literals (`` `${x}` ``) | — |
 | Closures (capturing variables) | — (arrow functions above are non-capturing only) |

@@ -10,6 +10,7 @@ use arcis_ast::Type;
 /// inside a function body), and a flag indicating whether this is the root
 /// `main` module (where object-type structs are defined) or a non-root
 /// module (where they are referenced as `crate::__ObjNAME`).
+#[derive(Clone, Copy)]
 pub(crate) struct Ctx<'a> {
     pub reassigned: &'a HashSet<String>,
     pub types: &'a HashMap<String, String>,
@@ -43,4 +44,15 @@ pub(crate) struct Ctx<'a> {
     /// `return`ed definite value in `Some(...)` when the function's return
     /// type is `T?`, and to `.unwrap()` a call result under `!`.
     pub type_scope: &'a HashMap<String, Type>,
+    /// struct name → field shape, for every `Type::Object` collected across
+    /// the program (interfaces, object-shaped type aliases, inline object
+    /// types). A generic interface/alias usage site is `Type::Generic {
+    /// name, args }` (never inlined back to `Type::Object` — see
+    /// `arcis-codegen::collect::substitute_named`'s doc comment), so object-
+    /// literal emission needs this side lookup to find the field TEMPLATE
+    /// (bare type-param types like `T`) by name; the concrete `args` are
+    /// left for `rustc`'s own inference to fill in from the `let`'s
+    /// declared type, same as a non-generic struct literal already relies
+    /// on context to fill in its concrete field types.
+    pub struct_fields: &'a HashMap<String, Vec<(String, Box<Type>, bool)>>,
 }

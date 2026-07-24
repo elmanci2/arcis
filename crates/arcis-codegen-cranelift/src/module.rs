@@ -403,6 +403,7 @@ pub(crate) fn arrow_to_function(
     };
     arcis_ast::Function {
         name: name.to_string(),
+        type_params: Vec::new(), // arrows can't be generic
         params: params.to_vec(),
         return_type: return_type.clone().unwrap_or_else(arcis_ast::Type::number),
         body: body_stmts,

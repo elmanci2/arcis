@@ -9,6 +9,11 @@ use crate::context::Ctx;
 pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
     out.push_str(if pub_ { "pub fn " } else { "fn " });
     out.push_str(&f.name);
+    if !f.type_params.is_empty() {
+        out.push('<');
+        out.push_str(&f.type_params.join(", "));
+        out.push('>');
+    }
     out.push('(');
     for (i, p) in f.params.iter().enumerate() {
         if i > 0 {
@@ -47,6 +52,7 @@ pub(crate) fn emit(out: &mut String, f: &Function, ctx: &Ctx, pub_: bool) {
         namespace_names: ctx.namespace_names,
         env: ctx.env,
         type_scope: &merged_scope,
+        struct_fields: ctx.struct_fields,
     };
     for stmt in &f.body {
         crate::stmt::emit(out, stmt, 1, &body_ctx);

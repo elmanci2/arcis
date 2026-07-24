@@ -107,6 +107,13 @@ pub(crate) fn from_ast(ty: &AstType, enum_names: &std::collections::HashSet<Stri
         // yet lowered by the Cranelift backend; both need a runtime
         // representation beyond a plain i64 handle.
         AstType::Function { .. } => Err("function types are not yet supported by the Cranelift backend".to_string()),
+        // Generics are Rust-backend-only (see `arcis-driver::build::check_no_generics`,
+        // which rejects any generic construct before this backend ever
+        // runs). This arm is defense-in-depth only, not the primary
+        // guarantee — `from_ast`'s `Err`s get silently swallowed by some
+        // callers (`.unwrap_or(ArcisType::Number)`), so it must never be
+        // relied on alone.
+        AstType::Generic { .. } => Err("generic types are not yet supported by the Cranelift backend — use --backend rust".to_string()),
         AstType::Named(other) => {
             // Could be an object type with a __Obj hash name, or a
             // user-defined interface/type-alias name. For now we accept

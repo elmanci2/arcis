@@ -205,7 +205,7 @@ fn rewrite_expr(expr: &mut Expr, scopes: &[Scope]) {
                 *name = mapped;
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             rewrite_expr(callee, scopes);
             for a in args {
                 rewrite_expr(a, scopes);
@@ -290,6 +290,7 @@ mod tests {
         let inner_print = Stmt::Expr(Expr::Call {
             callee: Box::new(Expr::Ident("print".to_string())),
             args: vec![Expr::Ident("x".to_string())],
+            type_args: Vec::new(),
         });
         let mut program = Program {
             stmts: vec![

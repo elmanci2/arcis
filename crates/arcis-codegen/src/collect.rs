@@ -116,7 +116,7 @@ fn collect_in_stmt(stmt: &Stmt, set: &mut HashSet<String>) {
 /// identifier and flag the receiver as `let mut`. Pure methods like
 /// `find`, `filter`, `map`, `reduce` do NOT mutate and are not flagged.
 fn collect_mutation_in_expr(expr: &Expr, set: &mut HashSet<String>) {
-    if let Expr::Call { callee, args } = expr {
+    if let Expr::Call { callee, args, .. } = expr {
         if let Expr::Member { object, property } = callee.as_ref() {
             if matches!(property.as_str(), "pop" | "unshift" | "push") {
                 if let Expr::Ident(name) = object.as_ref() {
@@ -413,12 +413,18 @@ pub(crate) fn collect_all_object_types(modules: &[Module]) -> Vec<Type> {
 /// If `t` is an object type (or array of one), and its name hasn't been seen
 /// yet, register it in `seen` and push the *innermost* [`Type::Object`] onto
 /// `out` (the struct emitter only ever needs the object shape, not the
-/// enclosing array wrapper).
+/// enclosing array wrapper). Recurses into the object's OWN fields too —
+/// `{ a: { b: number } }`'s inner `{ b: number }` shape needs its own
+/// struct definition emitted just as much as the outer one does (a field
+/// whose struct never gets emitted is a `cannot find type` `rustc` error
+/// downstream), and a naturally deeply-nested shape (JSON-inferred object
+/// trees especially, but also any hand-written nested object literal) can
+/// go arbitrarily deep.
 fn note_object_type(t: &Type, seen: &mut HashSet<String>, out: &mut Vec<Type>) {
     fn innermost_object(t: &Type) -> Option<&Type> {
         match t {
             Type::Object { .. } => Some(t),
-            Type::Array(inner) => innermost_object(inner),
+            Type::Array(inner) | Type::Optional(inner) => innermost_object(inner),
             _ => None,
         }
     }
@@ -426,6 +432,11 @@ fn note_object_type(t: &Type, seen: &mut HashSet<String>, out: &mut Vec<Type>) {
         if let Some(name) = obj.struct_name() {
             if seen.insert(name.to_string()) {
                 out.push(obj.clone());
+                if let Type::Object { fields, .. } = obj {
+                    for (_, field_ty, _) in fields {
+                        note_object_type(field_ty, seen, out);
+                    }
+                }
             }
         }
     }
@@ -476,35 +487,44 @@ fn collect_object_types_stmt(stmt: &Stmt, seen: &mut HashSet<String>, out: &mut 
 // ── Interfaces ───────────────────────────────────────────────────────────
 
 type InterfaceField = (String, Box<Type>, bool);
-type RawInterface = (Vec<String>, Vec<InterfaceField>);
+/// `(type_params, extends, fields)`. Type params are NOT merged through
+/// `extends` — a generic interface extending another generic interface is
+/// out of scope for now (see `resolve_interface_fields`'s doc comment).
+type RawInterface = (Vec<String>, Vec<String>, Vec<InterfaceField>);
 
 /// Collect every `interface` declaration across all modules (including ones
 /// wrapped in `export interface ...`), resolve `extends` chains by merging
 /// base fields (own fields win on name collision), and return one
 /// [`Type::Object`] per interface — named after the interface itself
-/// (unlike inline object types, which get a hash-based name).
-pub(crate) fn collect_interfaces(modules: &[Module]) -> Vec<Type> {
+/// (unlike inline object types, which get a hash-based name) — alongside a
+/// name → own `type_params` map (interfaces collapse to `Type::Object`,
+/// which has no room for type params of its own, so callers that need to
+/// emit a generic struct header must look them up here).
+pub(crate) fn collect_interfaces(modules: &[Module]) -> (Vec<Type>, HashMap<String, Vec<String>>) {
     let mut raw: HashMap<String, RawInterface> = HashMap::new();
     for m in modules {
         for stmt in &m.program.stmts {
             collect_interface_decl(stmt, &mut raw);
         }
     }
+    let type_params: HashMap<String, Vec<String>> =
+        raw.iter().map(|(name, (tp, _, _))| (name.clone(), tp.clone())).collect();
     let names: Vec<String> = raw.keys().cloned().collect();
     let mut resolved: HashMap<String, Vec<InterfaceField>> = HashMap::new();
     for name in &names {
         resolve_interface_fields(name, &raw, &mut resolved, &mut HashSet::new());
     }
-    resolved
+    let types = resolved
         .into_iter()
         .map(|(name, fields)| Type::Object { name, fields })
-        .collect()
+        .collect();
+    (types, type_params)
 }
 
 fn collect_interface_decl(stmt: &Stmt, raw: &mut HashMap<String, RawInterface>) {
     match stmt {
-        Stmt::Interface { name, extends, fields, .. } => {
-            raw.insert(name.clone(), (extends.clone(), fields.clone()));
+        Stmt::Interface { name, type_params, extends, fields, .. } => {
+            raw.insert(name.clone(), (type_params.clone(), extends.clone(), fields.clone()));
         }
         Stmt::ExportDecl(inner) => collect_interface_decl(inner, raw),
         _ => {}
@@ -523,7 +543,7 @@ fn resolve_interface_fields(
     if let Some(fields) = resolved.get(name) {
         return fields.clone();
     }
-    let Some((extends, own_fields)) = raw.get(name) else {
+    let Some((_type_params, extends, own_fields)) = raw.get(name) else {
         return Vec::new();
     };
     if !visiting.insert(name.to_string()) {
@@ -548,6 +568,9 @@ fn resolve_interface_fields(
 
 // ── Type aliases ─────────────────────────────────────────────────────────
 
+/// `name → type_params` for every generic `type X<T> = ...;` alias.
+pub(crate) type AliasTypeParams = HashMap<String, Vec<String>>;
+
 /// Replace every `Type::Named(name)` in `program` with its underlying type,
 /// transitively (an alias may refer to another alias). `name` may come from
 /// either a local `type X = ...;` declaration or `extra` (the interface
@@ -558,17 +581,29 @@ fn resolve_interface_fields(
 /// neither (e.g. an external Rust type pulled in via
 /// `import ... from "crate:<name>"`) are left untouched, passed through to
 /// `rustc` as-is.
-pub(crate) fn resolve_type_aliases(program: &mut Program, extra: &HashMap<String, Type>) {
+///
+/// Generic aliases split in two: a non-object RHS (`type Wrapper<T> = T[]`)
+/// is substituted+inlined like today, using `extra_type_params`/locally
+/// collected type params to bind each usage's `Type::Generic` args. An
+/// object-shaped RHS (`type Pair<A,B> = { ... }`) is treated like a generic
+/// interface — never inlined, left as a `Type::Generic` reference to the
+/// one real struct emitted for it elsewhere (see `collect_object_alias_structs`).
+pub(crate) fn resolve_type_aliases(
+    program: &mut Program,
+    extra: &HashMap<String, Type>,
+    extra_type_params: &AliasTypeParams,
+) {
     let mut raw: HashMap<String, Type> = extra.clone();
+    let mut type_params: AliasTypeParams = extra_type_params.clone();
     for stmt in &program.stmts {
-        collect_alias_decl(stmt, &mut raw);
+        collect_alias_decl(stmt, &mut raw, &mut type_params);
     }
     if raw.is_empty() {
         return;
     }
     let mut resolved: HashMap<String, Type> = HashMap::new();
     for stmt in &mut program.stmts {
-        rewrite_stmt_types(stmt, &raw, &mut resolved);
+        rewrite_stmt_types(stmt, &raw, &mut resolved, &type_params);
     }
 }
 
@@ -577,55 +612,73 @@ pub(crate) fn resolve_type_aliases(program: &mut Program, extra: &HashMap<String
 /// boundaries — a `type DiscountCode = ...` declared in `models.tsr` must
 /// work in `pricing.tsr` too. Only top-level declarations are global;
 /// function-local aliases stay local to their module's own resolution pass.
-pub(crate) fn collect_global_aliases(modules: &[Module]) -> HashMap<String, Type> {
+/// For a generic, object-shaped alias (`type Pair<A,B> = {...}`), the
+/// returned `Type::Object`'s `name` is rewritten to the alias's own
+/// declared name (overriding the parser's hash-based inline-object name) —
+/// it needs a stable, referenceable name since it's emitted as a real
+/// struct rather than inlined at every usage site.
+pub(crate) fn collect_global_aliases(modules: &[Module]) -> (HashMap<String, Type>, AliasTypeParams) {
     let mut raw = HashMap::new();
+    let mut type_params = HashMap::new();
     for m in modules {
         for stmt in &m.program.stmts {
-            match stmt {
-                Stmt::TypeAlias { name, ty, .. } => {
-                    raw.insert(name.clone(), ty.clone());
+            let inner = match stmt {
+                Stmt::ExportDecl(inner) => inner.as_ref(),
+                other => other,
+            };
+            if let Stmt::TypeAlias { name, type_params: tp, ty, .. } = inner {
+                raw.insert(name.clone(), named_object_alias(name, ty));
+                if !tp.is_empty() {
+                    type_params.insert(name.clone(), tp.clone());
                 }
-                Stmt::ExportDecl(inner) => {
-                    if let Stmt::TypeAlias { name, ty, .. } = inner.as_ref() {
-                        raw.insert(name.clone(), ty.clone());
-                    }
-                }
-                _ => {}
             }
         }
     }
-    raw
+    (raw, type_params)
 }
 
-fn collect_alias_decl(stmt: &Stmt, raw: &mut HashMap<String, Type>) {
+/// A generic, object-shaped alias's `Type::Object` gets its `name` field
+/// rewritten to `alias_name` (see `collect_global_aliases`'s doc comment);
+/// every other type is returned unchanged.
+fn named_object_alias(alias_name: &str, ty: &Type) -> Type {
+    match ty {
+        Type::Object { fields, .. } => Type::Object { name: alias_name.to_string(), fields: fields.clone() },
+        other => other.clone(),
+    }
+}
+
+fn collect_alias_decl(stmt: &Stmt, raw: &mut HashMap<String, Type>, type_params: &mut AliasTypeParams) {
     match stmt {
-        Stmt::TypeAlias { name, ty, .. } => {
-            raw.insert(name.clone(), ty.clone());
+        Stmt::TypeAlias { name, type_params: tp, ty, .. } => {
+            raw.insert(name.clone(), named_object_alias(name, ty));
+            if !tp.is_empty() {
+                type_params.insert(name.clone(), tp.clone());
+            }
         }
-        Stmt::ExportDecl(inner) => collect_alias_decl(inner, raw),
+        Stmt::ExportDecl(inner) => collect_alias_decl(inner, raw, type_params),
         Stmt::Function(f) => {
             for s in &f.body {
-                collect_alias_decl(s, raw);
+                collect_alias_decl(s, raw, type_params);
             }
         }
         Stmt::ExportDefault(ExportDefault::Function(f)) => {
             for s in &f.body {
-                collect_alias_decl(s, raw);
+                collect_alias_decl(s, raw, type_params);
             }
         }
         Stmt::If { then_branch, else_branch, .. } => {
             for s in then_branch {
-                collect_alias_decl(s, raw);
+                collect_alias_decl(s, raw, type_params);
             }
             if let Some(eb) = else_branch {
                 for s in eb {
-                    collect_alias_decl(s, raw);
+                    collect_alias_decl(s, raw, type_params);
                 }
             }
         }
         Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::ForOf { body, .. } => {
             for s in body {
-                collect_alias_decl(s, raw);
+                collect_alias_decl(s, raw, type_params);
             }
         }
         _ => {}
@@ -637,6 +690,7 @@ fn resolve_alias(
     raw: &HashMap<String, Type>,
     resolved: &mut HashMap<String, Type>,
     visiting: &mut HashSet<String>,
+    type_params: &AliasTypeParams,
 ) -> Option<Type> {
     if let Some(t) = resolved.get(name) {
         return Some(t.clone());
@@ -647,7 +701,7 @@ fn resolve_alias(
         // resolved) type rather than recursing forever.
         return Some(ty);
     }
-    let substituted = substitute_named(&ty, raw, resolved, visiting);
+    let substituted = substitute_named(&ty, raw, resolved, visiting, type_params);
     visiting.remove(name);
     resolved.insert(name.to_string(), substituted.clone());
     Some(substituted)
@@ -658,95 +712,289 @@ fn substitute_named(
     raw: &HashMap<String, Type>,
     resolved: &mut HashMap<String, Type>,
     visiting: &mut HashSet<String>,
+    type_params: &AliasTypeParams,
 ) -> Type {
     match ty {
-        Type::Named(n) => resolve_alias(n, raw, resolved, visiting).unwrap_or_else(|| ty.clone()),
-        Type::Array(inner) => Type::Array(Box::new(substitute_named(inner, raw, resolved, visiting))),
+        Type::Named(n) => {
+            resolve_alias(n, raw, resolved, visiting, type_params).unwrap_or_else(|| ty.clone())
+        }
+        Type::Generic { name, args } => {
+            let args: Vec<Type> =
+                args.iter().map(|a| substitute_named(a, raw, resolved, visiting, type_params)).collect();
+            // Object-shaped aliases (and interfaces, which never appear in
+            // `raw` at all) are never inlined — they're emitted as one real
+            // generic struct and referenced by name everywhere. Only a
+            // non-object alias (`type Wrapper<T> = T[]`) gets substituted
+            // away here.
+            let is_object_shaped = matches!(raw.get(name), Some(Type::Object { .. }));
+            if !is_object_shaped {
+                if let (Some(params), Some(underlying)) = (type_params.get(name), raw.get(name)) {
+                    if params.len() == args.len() {
+                        let subst: HashMap<&str, &Type> =
+                            params.iter().map(String::as_str).zip(args.iter()).collect();
+                        let bound = bind_type_params(underlying, &subst);
+                        return substitute_named(&bound, raw, resolved, visiting, type_params);
+                    }
+                }
+            }
+            Type::Generic { name: name.clone(), args }
+        }
+        Type::Array(inner) => Type::Array(Box::new(substitute_named(inner, raw, resolved, visiting, type_params))),
         Type::Object { name, fields } => Type::Object {
             name: name.clone(),
             fields: fields
                 .iter()
-                .map(|(k, t, opt)| (k.clone(), Box::new(substitute_named(t, raw, resolved, visiting)), *opt))
+                .map(|(k, t, opt)| {
+                    (k.clone(), Box::new(substitute_named(t, raw, resolved, visiting, type_params)), *opt)
+                })
                 .collect(),
         },
-        Type::Union(members) => {
-            Type::Union(members.iter().map(|m| substitute_named(m, raw, resolved, visiting)).collect())
-        }
-        Type::Intersection(members) => {
-            Type::Intersection(members.iter().map(|m| substitute_named(m, raw, resolved, visiting)).collect())
-        }
+        Type::Union(members) => Type::Union(
+            members.iter().map(|m| substitute_named(m, raw, resolved, visiting, type_params)).collect(),
+        ),
+        Type::Intersection(members) => Type::Intersection(
+            members.iter().map(|m| substitute_named(m, raw, resolved, visiting, type_params)).collect(),
+        ),
         Type::Function { params, return_type } => Type::Function {
-            params: params.iter().map(|p| substitute_named(p, raw, resolved, visiting)).collect(),
-            return_type: Box::new(substitute_named(return_type, raw, resolved, visiting)),
+            params: params.iter().map(|p| substitute_named(p, raw, resolved, visiting, type_params)).collect(),
+            return_type: Box::new(substitute_named(return_type, raw, resolved, visiting, type_params)),
         },
         _ => ty.clone(),
     }
 }
 
-fn rewrite_stmt_types(stmt: &mut Stmt, raw: &HashMap<String, Type>, resolved: &mut HashMap<String, Type>) {
+/// Replace every `Type::Named(p)` in `ty` where `p` is a key of `subst`
+/// with its bound concrete type — a single, non-alias-table substitution
+/// pass used to instantiate a generic alias's underlying type with a
+/// specific usage site's type arguments (`Wrapper<T> = T[]` + `args=[number]`
+/// → `number[]`).
+fn bind_type_params(ty: &Type, subst: &HashMap<&str, &Type>) -> Type {
+    match ty {
+        Type::Named(n) => subst.get(n.as_str()).map(|t| (*t).clone()).unwrap_or_else(|| ty.clone()),
+        Type::Generic { name, args } => Type::Generic {
+            name: name.clone(),
+            args: args.iter().map(|a| bind_type_params(a, subst)).collect(),
+        },
+        Type::Array(inner) => Type::Array(Box::new(bind_type_params(inner, subst))),
+        Type::Object { name, fields } => Type::Object {
+            name: name.clone(),
+            fields: fields.iter().map(|(k, t, opt)| (k.clone(), Box::new(bind_type_params(t, subst)), *opt)).collect(),
+        },
+        Type::Optional(inner) => Type::Optional(Box::new(bind_type_params(inner, subst))),
+        Type::Union(members) => Type::Union(members.iter().map(|m| bind_type_params(m, subst)).collect()),
+        Type::Intersection(members) => {
+            Type::Intersection(members.iter().map(|m| bind_type_params(m, subst)).collect())
+        }
+        Type::Function { params, return_type } => Type::Function {
+            params: params.iter().map(|p| bind_type_params(p, subst)).collect(),
+            return_type: Box::new(bind_type_params(return_type, subst)),
+        },
+        _ => ty.clone(),
+    }
+}
+
+fn rewrite_stmt_types(
+    stmt: &mut Stmt,
+    raw: &HashMap<String, Type>,
+    resolved: &mut HashMap<String, Type>,
+    type_params: &AliasTypeParams,
+) {
     let mut visiting = HashSet::new();
     match stmt {
-        Stmt::Let { ty, .. } | Stmt::Const { ty, .. } => {
+        Stmt::Let { ty, value, .. } | Stmt::Const { ty, value, .. } => {
             if let Some(t) = ty {
-                *t = substitute_named(t, raw, resolved, &mut visiting);
+                *t = substitute_named(t, raw, resolved, &mut visiting, type_params);
             }
+            rewrite_expr_types(value, raw, resolved, type_params);
         }
-        Stmt::ForOf { ty, body, .. } => {
+        Stmt::Assign { value, .. } => rewrite_expr_types(value, raw, resolved, type_params),
+        Stmt::AssignIndex { index, value, .. } => {
+            rewrite_expr_types(index, raw, resolved, type_params);
+            rewrite_expr_types(value, raw, resolved, type_params);
+        }
+        Stmt::AssignMember { object, value, .. } => {
+            rewrite_expr_types(object, raw, resolved, type_params);
+            rewrite_expr_types(value, raw, resolved, type_params);
+        }
+        Stmt::ForOf { ty, iterable, body, .. } => {
             if let Some(t) = ty {
-                *t = substitute_named(t, raw, resolved, &mut visiting);
+                *t = substitute_named(t, raw, resolved, &mut visiting, type_params);
             }
+            rewrite_expr_types(iterable, raw, resolved, type_params);
             for s in body {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
         }
         Stmt::Function(f) => {
             for p in &mut f.params {
-                p.ty = substitute_named(&p.ty, raw, resolved, &mut visiting);
+                p.ty = substitute_named(&p.ty, raw, resolved, &mut visiting, type_params);
             }
-            f.return_type = substitute_named(&f.return_type, raw, resolved, &mut visiting);
+            f.return_type = substitute_named(&f.return_type, raw, resolved, &mut visiting, type_params);
             for s in &mut f.body {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
         }
         Stmt::ExportDefault(ExportDefault::Function(f)) => {
             for p in &mut f.params {
-                p.ty = substitute_named(&p.ty, raw, resolved, &mut visiting);
+                p.ty = substitute_named(&p.ty, raw, resolved, &mut visiting, type_params);
             }
-            f.return_type = substitute_named(&f.return_type, raw, resolved, &mut visiting);
+            f.return_type = substitute_named(&f.return_type, raw, resolved, &mut visiting, type_params);
             for s in &mut f.body {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
         }
-        Stmt::If { then_branch, else_branch, .. } => {
+        Stmt::ExportDefault(ExportDefault::Expr(e)) => rewrite_expr_types(e, raw, resolved, type_params),
+        Stmt::Return(Some(e)) | Stmt::Throw(e) | Stmt::Expr(e) => {
+            rewrite_expr_types(e, raw, resolved, type_params)
+        }
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
+        Stmt::If { condition, then_branch, else_branch } => {
+            rewrite_expr_types(condition, raw, resolved, type_params);
             for s in then_branch {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
             if let Some(eb) = else_branch {
                 for s in eb {
-                    rewrite_stmt_types(s, raw, resolved);
+                    rewrite_stmt_types(s, raw, resolved, type_params);
                 }
             }
         }
-        Stmt::While { body, .. } => {
+        Stmt::While { condition, body } => {
+            rewrite_expr_types(condition, raw, resolved, type_params);
             for s in body {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
         }
-        Stmt::For { init, body, .. } => {
+        Stmt::For { init, condition, update, body } => {
             if let Some(init_stmt) = init {
-                rewrite_stmt_types(init_stmt, raw, resolved);
+                rewrite_stmt_types(init_stmt, raw, resolved, type_params);
+            }
+            if let Some(c) = condition {
+                rewrite_expr_types(c, raw, resolved, type_params);
+            }
+            if let Some(update_stmt) = update {
+                rewrite_stmt_types(update_stmt, raw, resolved, type_params);
             }
             for s in body {
-                rewrite_stmt_types(s, raw, resolved);
+                rewrite_stmt_types(s, raw, resolved, type_params);
             }
         }
-        Stmt::ExportDecl(inner) => rewrite_stmt_types(inner, raw, resolved),
+        Stmt::Switch { discriminant, cases } => {
+            rewrite_expr_types(discriminant, raw, resolved, type_params);
+            for case in cases {
+                for v in &mut case.values {
+                    rewrite_expr_types(v, raw, resolved, type_params);
+                }
+                for s in &mut case.body {
+                    rewrite_stmt_types(s, raw, resolved, type_params);
+                }
+            }
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                rewrite_stmt_types(s, raw, resolved, type_params);
+            }
+            for s in catch_body {
+                rewrite_stmt_types(s, raw, resolved, type_params);
+            }
+        }
+        Stmt::ExportDecl(inner) => rewrite_stmt_types(inner, raw, resolved, type_params),
         Stmt::Interface { fields, .. } => {
             for (_, t, _) in fields {
-                **t = substitute_named(t, raw, resolved, &mut visiting);
+                **t = substitute_named(t, raw, resolved, &mut visiting, type_params);
             }
         }
-        _ => {}
+        Stmt::Import { .. }
+        | Stmt::FromImport { .. }
+        | Stmt::ExportSpec(_)
+        | Stmt::TypeAlias { .. }
+        | Stmt::Enum { .. } => {}
+    }
+}
+
+/// Rewrite every `Type::Named`/`Type::Generic` reachable from `expr` — today
+/// that's just `Expr::Call.type_args` (`json<Person>(...)`, or a
+/// user-declared generic function called with explicit turbofish args) and
+/// `Expr::AsAssertion.ty`/`Expr::Arrow`'s param/return types, the only
+/// places a bare `Type` value lives inside an expression tree. Without this,
+/// an explicit type argument stays an unresolved `Type::Named`/`Type::Generic`
+/// all the way to codegen, which only knows how to read fields off a real
+/// `Type::Object`.
+fn rewrite_expr_types(
+    expr: &mut Expr,
+    raw: &HashMap<String, Type>,
+    resolved: &mut HashMap<String, Type>,
+    type_params: &AliasTypeParams,
+) {
+    let mut visiting = HashSet::new();
+    match expr {
+        Expr::Call { callee, args, type_args } => {
+            rewrite_expr_types(callee, raw, resolved, type_params);
+            for a in args {
+                rewrite_expr_types(a, raw, resolved, type_params);
+            }
+            for t in type_args {
+                *t = substitute_named(t, raw, resolved, &mut visiting, type_params);
+            }
+        }
+        Expr::Unary { operand, .. }
+        | Expr::TypeOf(operand)
+        | Expr::NonNullAssertion(operand)
+        | Expr::AsConst(operand) => rewrite_expr_types(operand, raw, resolved, type_params),
+        Expr::Binary { left, right, .. } => {
+            rewrite_expr_types(left, raw, resolved, type_params);
+            rewrite_expr_types(right, raw, resolved, type_params);
+        }
+        Expr::Member { object, .. } => rewrite_expr_types(object, raw, resolved, type_params),
+        Expr::Index { object, index } => {
+            rewrite_expr_types(object, raw, resolved, type_params);
+            rewrite_expr_types(index, raw, resolved, type_params);
+        }
+        Expr::ArrayLiteral { elements } => {
+            for el in elements {
+                match el {
+                    arcis_ast::ArrayElement::Item(e) | arcis_ast::ArrayElement::Spread(e) => {
+                        rewrite_expr_types(e, raw, resolved, type_params)
+                    }
+                }
+            }
+        }
+        Expr::ObjectLiteral { fields } => {
+            for f in fields {
+                match f {
+                    arcis_ast::ObjectField::KV(_, e) | arcis_ast::ObjectField::Spread(e) => {
+                        rewrite_expr_types(e, raw, resolved, type_params)
+                    }
+                }
+            }
+        }
+        Expr::AsAssertion { expr, ty } => {
+            *ty = substitute_named(ty, raw, resolved, &mut visiting, type_params);
+            rewrite_expr_types(expr, raw, resolved, type_params);
+        }
+        Expr::Arrow { params, return_type, body } => {
+            for p in params {
+                p.ty = substitute_named(&p.ty, raw, resolved, &mut visiting, type_params);
+            }
+            if let Some(rt) = return_type {
+                *rt = substitute_named(rt, raw, resolved, &mut visiting, type_params);
+            }
+            match body {
+                arcis_ast::ArrowBody::Expr(e) => rewrite_expr_types(e, raw, resolved, type_params),
+                arcis_ast::ArrowBody::Block(stmts) => {
+                    for s in stmts {
+                        rewrite_stmt_types(s, raw, resolved, type_params);
+                    }
+                }
+            }
+        }
+        Expr::Number(_)
+        | Expr::String(_)
+        | Expr::Bool(_)
+        | Expr::Ident(_)
+        | Expr::Path { .. }
+        | Expr::Null
+        | Expr::Undefined => {}
     }
 }
 

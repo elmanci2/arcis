@@ -62,7 +62,7 @@ fn visit_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
 
 fn visit_expr(e: &Expr, out: &mut HashSet<String>) {
     match e {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             // Detect mutating method calls: arr.push(x) / arr.pop() / arr.unshift(x)
             if let Expr::Member { object, property } = callee.as_ref() {
                 match property.as_str() {

@@ -7,7 +7,10 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#import-keywords" },
+    { "include": "#function-decl" },
     { "include": "#control-keywords" },
+    { "include": "#type-decl-name" },
+    { "include": "#type-decl-keywords" },
     { "include": "#type-keywords" },
     { "include": "#constants" },
     { "include": "#function-call" },
@@ -64,6 +67,36 @@
       "name": "storage.type.arcis",
       "match": "\\b(string|number|boolean|void)\\b"
     },
+    "type-decl-keywords": {
+      "name": "storage.type.arcis",
+      "match": "\\b(extends)\\b"
+    },
+    "function-decl": {
+      "comment": "`function name<T, U>(` — matched ahead of #control-keywords so the declared name and its generic type-param list (if any) get their own scopes instead of falling through to plain #identifiers. Anonymous (`export default function(){}`) and non-generic forms both still match: groups 2/3 are optional.",
+      "match": "\\b(function)\\b(?:\\s+([A-Za-z_$][A-Za-z0-9_$]*))?(\\s*<[^<>]*>)?",
+      "captures": {
+        "1": { "name": "keyword.control.arcis" },
+        "2": { "name": "entity.name.function.arcis" },
+        "3": {
+          "patterns": [
+            { "name": "entity.name.type.parameter.arcis", "match": "[A-Za-z_$][A-Za-z0-9_$]*" }
+          ]
+        }
+      }
+    },
+    "type-decl-name": {
+      "comment": "`interface Name<T>` / `type Name<T> =` / `enum Name` — the keyword, the declared type's own name, and its generic type-param list (if any).",
+      "match": "\\b(interface|type|enum)\\b(?:\\s+([A-Za-z_$][A-Za-z0-9_$]*))?(\\s*<[^<>]*>)?",
+      "captures": {
+        "1": { "name": "storage.type.arcis" },
+        "2": { "name": "entity.name.type.arcis" },
+        "3": {
+          "patterns": [
+            { "name": "entity.name.type.parameter.arcis", "match": "[A-Za-z_$][A-Za-z0-9_$]*" }
+          ]
+        }
+      }
+    },
     "constants": {
       "name": "constant.language.boolean.arcis",
       "match": "\\b(true|false)\\b"
@@ -71,8 +104,9 @@
     "function-call": {
       "patterns": [
         {
+          "comment": "Also matches an explicit turbofish call `identity<number>(5)` (one level of nested `<>`, e.g. `f<Box<number>>(x)`, still resolves) — without this the `<...>` between the name and `(` would defeat the plain `(?=\\()` lookahead and the name would fall through to plain #identifiers.",
           "name": "entity.name.function.arcis",
-          "match": "\\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\\s*\\()"
+          "match": "\\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\\s*(?:<(?:[^<>]|<[^<>]*>)*>)?\\s*\\()"
         }
       ]
     },

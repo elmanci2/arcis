@@ -31,6 +31,8 @@ use arcis_ast::Program;
 
 mod duplicate;
 pub mod infer;
+pub mod json;
+pub mod jsoncheck;
 mod loop_ctx;
 pub mod narrow;
 pub mod nullsafety;
@@ -40,6 +42,8 @@ mod unused;
 
 pub use duplicate::DuplicateDecl;
 pub use infer::{expr_type, infer_program, TypeEnv};
+pub use json::infer_json_type;
+pub use jsoncheck::{check_json_calls, JsonCallIssue};
 pub use narrow::narrow_program;
 pub use nullsafety::{check_null_safety, NullSafetyIssue};
 pub use typecheck::{check_types, TypeMismatchIssue};

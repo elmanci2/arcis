@@ -377,8 +377,13 @@ fn validate_target(
 }
 
 /// Known builtin namespaces that are provided by the runtime without a file.
+/// `json` isn't a namespace in the `sys.*` sense (there's no `json.parse`) —
+/// `json(...)` is a bare global builtin, same as `print`/`input`, needing no
+/// import at all. Registering it here only makes a redundant `import json;`
+/// resolve cleanly instead of erroring as "module not found", matching how
+/// `import sys;` is likewise accepted-but-unnecessary today.
 fn is_builtin_ns(name: &str) -> bool {
-    matches!(name, "sys")
+    matches!(name, "sys" | "json")
 }
 
 #[cfg(test)]

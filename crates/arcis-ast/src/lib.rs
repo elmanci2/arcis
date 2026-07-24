@@ -36,6 +36,8 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    /// `<T, U>` — empty for a non-generic function.
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -182,16 +184,20 @@ pub enum Stmt {
     /// `export default ...` — function or expression.
     ExportDefault(ExportDefault),
 
-    /// `type Name = <type>;`
+    /// `type Name<T, U> = <type>;`
     TypeAlias {
         name: String,
+        /// `<T, U>` — empty for a non-generic alias.
+        type_params: Vec<String>,
         ty: Type,
         line: usize,
         col: usize,
     },
-    /// `interface Name [extends Base, ...] { field: type, field2?: type }`
+    /// `interface Name<T> [extends Base, ...] { field: type, field2?: type }`
     Interface {
         name: String,
+        /// `<T, U>` — empty for a non-generic interface.
+        type_params: Vec<String>,
         extends: Vec<String>,
         fields: Vec<(String, Box<Type>, bool)>,
         line: usize,
@@ -229,6 +235,9 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        /// Explicit turbofish type args: `identity<number>(5)`. Empty when
+        /// omitted (the common case — Rust infers them, same as today).
+        type_args: Vec<Type>,
     },
     Unary {
         op: UnaryOp,
@@ -396,6 +405,13 @@ pub enum Type {
     /// A user-defined / named type (interface name, type alias name, or any
     /// identifier not recognised as a primitive keyword).
     Named(String),
+    /// `Name<Arg1, Arg2>` — a parameterized use of a generic interface,
+    /// generic type alias, or (in a function signature) a bare type
+    /// parameter is never wrapped in this — only actual `<...>` usage is.
+    Generic {
+        name: String,
+        args: Vec<Type>,
+    },
     /// `T?` — an optional value: either a `T` or `null`/`undefined`.
     /// The null-safety checker forces every optional to be resolved
     /// (`?? fallback`, an `if (x != null)` guard, or `!`) before use.
@@ -499,6 +515,7 @@ impl Type {
             Type::Intersection(_) => "intersection",
             Type::Literal(_) => "literal",
             Type::Function { .. } => "function",
+            Type::Generic { name, .. } => name,
         }
     }
 
@@ -509,6 +526,7 @@ impl Type {
             Type::Object { name, .. } => Some(name),
             Type::Array(inner) => inner.struct_name(),
             Type::Optional(inner) => inner.struct_name(),
+            Type::Generic { name, .. } => Some(name),
             _ => None,
         }
     }
@@ -530,4 +548,106 @@ pub fn object_type_name(fields: &[(String, Box<Type>, bool)]) -> String {
         opt.hash(&mut h);
     }
     format!("__Obj{:x}", h.finish() & 0xFFFFFF)
+}
+
+/// `true` if `program` contains at least one call to the `json(...)` builtin
+/// anywhere (any expression position, any nesting depth). Shared by
+/// `arcis-driver` (Cargo.toml dependency injection, Cranelift rejection) and
+/// `arcis-codegen` (struct `#[derive(serde::Deserialize)]` decision) — lives
+/// here, their common dependency-free ancestor, so the exhaustive walk isn't
+/// duplicated in either.
+pub fn contains_json_call(program: &Program) -> bool {
+    program.stmts.iter().any(stmt_contains_json_call)
+}
+
+fn stmt_contains_json_call(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Const { value, .. } | Stmt::Assign { value, .. } => {
+            expr_contains_json_call(value)
+        }
+        Stmt::AssignIndex { index, value, .. } => {
+            expr_contains_json_call(index) || expr_contains_json_call(value)
+        }
+        Stmt::AssignMember { object, value, .. } => {
+            expr_contains_json_call(object) || expr_contains_json_call(value)
+        }
+        Stmt::Function(f) => f.body.iter().any(stmt_contains_json_call),
+        Stmt::Return(Some(e)) | Stmt::Throw(e) | Stmt::Expr(e) => expr_contains_json_call(e),
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => false,
+        Stmt::If { condition, then_branch, else_branch } => {
+            expr_contains_json_call(condition)
+                || then_branch.iter().any(stmt_contains_json_call)
+                || else_branch.as_ref().map_or(false, |eb| eb.iter().any(stmt_contains_json_call))
+        }
+        Stmt::While { condition, body } => {
+            expr_contains_json_call(condition) || body.iter().any(stmt_contains_json_call)
+        }
+        Stmt::For { init, condition, update, body } => {
+            init.as_deref().map_or(false, stmt_contains_json_call)
+                || condition.as_ref().map_or(false, expr_contains_json_call)
+                || update.as_deref().map_or(false, stmt_contains_json_call)
+                || body.iter().any(stmt_contains_json_call)
+        }
+        Stmt::ForOf { iterable, body, .. } => {
+            expr_contains_json_call(iterable) || body.iter().any(stmt_contains_json_call)
+        }
+        Stmt::Switch { discriminant, cases } => {
+            expr_contains_json_call(discriminant)
+                || cases.iter().any(|c| {
+                    c.values.iter().any(expr_contains_json_call)
+                        || c.body.iter().any(stmt_contains_json_call)
+                })
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            body.iter().any(stmt_contains_json_call) || catch_body.iter().any(stmt_contains_json_call)
+        }
+        Stmt::Import { .. }
+        | Stmt::FromImport { .. }
+        | Stmt::ExportSpec(_)
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. }
+        | Stmt::Enum { .. } => false,
+        Stmt::ExportDecl(inner) => stmt_contains_json_call(inner),
+        Stmt::ExportDefault(ExportDefault::Function(f)) => f.body.iter().any(stmt_contains_json_call),
+        Stmt::ExportDefault(ExportDefault::Expr(e)) => expr_contains_json_call(e),
+    }
+}
+
+fn expr_contains_json_call(e: &Expr) -> bool {
+    match e {
+        Expr::Call { callee, args, .. } => {
+            matches!(callee.as_ref(), Expr::Ident(n) if n == "json")
+                || expr_contains_json_call(callee)
+                || args.iter().any(expr_contains_json_call)
+        }
+        Expr::Unary { operand, .. }
+        | Expr::TypeOf(operand)
+        | Expr::NonNullAssertion(operand)
+        | Expr::AsConst(operand) => expr_contains_json_call(operand),
+        Expr::Binary { left, right, .. } => {
+            expr_contains_json_call(left) || expr_contains_json_call(right)
+        }
+        Expr::Member { object, .. } => expr_contains_json_call(object),
+        Expr::Index { object, index } => {
+            expr_contains_json_call(object) || expr_contains_json_call(index)
+        }
+        Expr::ArrayLiteral { elements } => elements.iter().any(|el| match el {
+            ArrayElement::Item(e) | ArrayElement::Spread(e) => expr_contains_json_call(e),
+        }),
+        Expr::ObjectLiteral { fields } => fields.iter().any(|f| match f {
+            ObjectField::KV(_, e) | ObjectField::Spread(e) => expr_contains_json_call(e),
+        }),
+        Expr::AsAssertion { expr, .. } => expr_contains_json_call(expr),
+        Expr::Arrow { body, .. } => match body {
+            ArrowBody::Expr(e) => expr_contains_json_call(e),
+            ArrowBody::Block(stmts) => stmts.iter().any(stmt_contains_json_call),
+        },
+        Expr::Number(_)
+        | Expr::String(_)
+        | Expr::Bool(_)
+        | Expr::Ident(_)
+        | Expr::Path { .. }
+        | Expr::Null
+        | Expr::Undefined => false,
+    }
 }

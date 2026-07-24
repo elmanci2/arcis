@@ -22,7 +22,7 @@ pub(crate) fn emit(out: &mut String, expr: &Expr, ctx: &Ctx) {
         Expr::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Expr::Ident(name) => out.push_str(name),
 
-        Expr::Call { callee, args } => emit_call(out, callee, args, ctx),
+        Expr::Call { callee, args, type_args } => emit_call(out, expr, callee, args, type_args, ctx),
 
         Expr::Unary { op, operand } => emit_unary(out, *op, operand, ctx),
         Expr::Member { object, property } => emit_member(out, object, property, ctx),
@@ -216,6 +216,20 @@ fn emit_index(out: &mut String, object: &Expr, index: &Expr, ctx: &Ctx) {
 }
 
 fn emit_array_literal(out: &mut String, elements: &[ArrayElement], ctx: &Ctx) {
+    // A literal array of objects (`[{ a: 1 }, { a: 2 }]`) needs
+    // `current_let_type` narrowed to the ELEMENT type before recursing into
+    // each item — same reasoning as `emit_object_literal`'s per-field
+    // narrowing just above: without it, a nested object-literal element
+    // would still see the outer `T[]` type and emit garbage.
+    let elem_ty = ctx.current_let_type.and_then(|t| t.array_inner());
+    let nested;
+    let ctx = match elem_ty {
+        Some(t) => {
+            nested = Ctx { current_let_type: Some(t), ..*ctx };
+            &nested
+        }
+        None => ctx,
+    };
     let has_spread = elements.iter().any(|e| matches!(e, ArrayElement::Spread(_)));
     if elements.is_empty() {
         // Without a declared type, default to `Vec<f64>`. For other types,
@@ -261,7 +275,17 @@ fn emit_object_literal(out: &mut String, fields: &[ObjectField], ctx: &Ctx) {
     // element literal is shaped like `T`, not `T[]`.
     if let Some(outer_ty) = ctx.current_let_type {
         let ty = outer_ty.array_inner().unwrap_or(outer_ty);
-        if let Some(obj_fields) = ty.object_fields() {
+        // A generic interface/alias usage (`Box<number>`) is never inlined
+        // back to `Type::Object` (see `Ctx::struct_fields`'s doc comment) —
+        // fall back to the field-shape TEMPLATE looked up by struct name.
+        // The concrete field types (`T` -> `number`) are left for `rustc`'s
+        // own inference to fill in from `ty`, same as a non-generic struct
+        // literal already relies on context for its field types.
+        let generic_fields = match ty {
+            arcis_ast::Type::Generic { name, .. } => ctx.struct_fields.get(name),
+            _ => None,
+        };
+        if let Some(obj_fields) = ty.object_fields().or_else(|| generic_fields.map(|v| v.as_slice())) {
             out.push_str(ty.struct_name().unwrap_or(""));
             out.push_str(" { ");
             let mut first = true;
@@ -276,19 +300,34 @@ fn emit_object_literal(out: &mut String, fields: &[ObjectField], ctx: &Ctx) {
                             out.push_str(", ");
                         }
                         first = false;
-                        let optional = obj_fields
-                            .iter()
-                            .find(|(fname, _, _)| fname == k)
-                            .map(|(_, _, opt)| *opt)
-                            .unwrap_or(false);
+                        let field_ty = obj_fields.iter().find(|(fname, _, _)| fname == k);
+                        let optional = field_ty.map(|(_, _, opt)| *opt).unwrap_or(false);
                         out.push_str(k);
                         out.push_str(": ");
+                        // A nested object/array literal (`{ a: { b: 1 } }`)
+                        // needs `current_let_type` narrowed to THIS field's
+                        // own declared type — otherwise the recursive
+                        // `emit` call for `v` would still see the OUTER
+                        // struct's type and emit the wrong struct name /
+                        // bogus missing-field `todo!()`s for the inner
+                        // literal (same "context drives struct-literal
+                        // emission" mechanism `emit_let`/`emit_const` use
+                        // for the top-level case, just needed here too for
+                        // nesting).
+                        let nested;
+                        let field_ctx = match field_ty.map(|(_, t, _)| t.as_ref()) {
+                            Some(t) => {
+                                nested = Ctx { current_let_type: Some(t), ..*ctx };
+                                &nested
+                            }
+                            None => ctx,
+                        };
                         if optional {
                             out.push_str("Some(");
-                            emit(out, v, ctx);
+                            emit(out, v, field_ctx);
                             out.push(')');
                         } else {
-                            emit(out, v, ctx);
+                            emit(out, v, field_ctx);
                         }
                     }
                     ObjectField::Spread(e) => last_spread = Some(e),
@@ -388,8 +427,8 @@ fn wrap_binary(out: &mut String, op: &str, left: &Expr, right: &Expr, ctx: &Ctx)
 
 // ── Calls: dispatch to builtin / sys / method / generic ──────────────────
 
-fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
-    // print / input builtins.
+fn emit_call(out: &mut String, call_expr: &Expr, callee: &Expr, args: &[Expr], type_args: &[arcis_ast::Type], ctx: &Ctx) {
+    // print / input / json builtins.
     if let Expr::Ident(name) = callee {
         if name == "print" {
             crate::builtin::emit_print(out, args, ctx);
@@ -397,6 +436,10 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
         }
         if name == "input" {
             crate::builtin::emit_input(out);
+            return;
+        }
+        if name == "json" {
+            crate::builtin::emit_json(out, call_expr, args, type_args, ctx);
             return;
         }
     }
@@ -426,9 +469,21 @@ fn emit_call(out: &mut String, callee: &Expr, args: &[Expr], ctx: &Ctx) {
             return;
         }
     }
-    // Named function call: f(args).
+    // Named function call: f(args), or f::<T>(args) with explicit turbofish
+    // type args. Omitted (the common, inferred case) emits exactly as
+    // before and lets `rustc`'s own inference fill in the generic params.
     if let Expr::Ident(name) = callee {
         out.push_str(name);
+        if !type_args.is_empty() {
+            out.push_str("::<");
+            for (i, t) in type_args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&crate::types::ts_type_to_rust(t, ctx.is_root));
+            }
+            out.push('>');
+        }
         out.push('(');
         for (i, a) in args.iter().enumerate() {
             if i > 0 {

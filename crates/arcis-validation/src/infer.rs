@@ -264,7 +264,7 @@ fn infer_expr_annotations(e: &mut Expr, scope: &Scope, env: &TypeEnv) {
                 }
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             infer_expr_annotations(callee, scope, env);
             for a in args.iter_mut() {
                 infer_expr_annotations(a, scope, env);
@@ -460,7 +460,7 @@ pub fn expr_type(e: &Expr, scope: &Scope, env: &TypeEnv) -> Option<Type> {
                 EqEq | NotEq | Lt | Gt | LtEq | GtEq | And | Or => Some(Type::boolean()),
             }
         }
-        Expr::Call { callee, args } => call_type(callee, args, scope, env),
+        Expr::Call { callee, args, type_args } => call_type(callee, args, type_args, scope, env),
         Expr::Member { object, property } => member_type(object, property, scope, env),
         Expr::Index { object, .. } => expr_type(object, scope, env)
             .and_then(|t| t.array_inner().cloned()),
@@ -534,7 +534,7 @@ pub fn expr_type(e: &Expr, scope: &Scope, env: &TypeEnv) -> Option<Type> {
     }
 }
 
-fn call_type(callee: &Expr, args: &[Expr], scope: &Scope, env: &TypeEnv) -> Option<Type> {
+fn call_type(callee: &Expr, args: &[Expr], type_args: &[Type], scope: &Scope, env: &TypeEnv) -> Option<Type> {
     if let Expr::Ident(name) = callee {
         return match name.as_str() {
             "print" => Some(Type::void()),
@@ -542,6 +542,18 @@ fn call_type(callee: &Expr, args: &[Expr], scope: &Scope, env: &TypeEnv) -> Opti
             "str" => Some(Type::string()),
             "parseFloat" | "parseInt" | "Number" => Some(Type::number()),
             "isNaN" => Some(Type::boolean()),
+            // `json("./data.json")` — a literal path is read and its shape
+            // inferred at compile time (see `crate::json`), same as an
+            // object literal's own type is inferred. `json<T>(path)` — a
+            // non-literal path falls back to the explicit turbofish type
+            // arg (resolved to a real interface shape later, in
+            // `arcis-codegen`'s alias/interface substitution pass — here it
+            // may still be an unresolved `Type::Named`, which is fine for
+            // best-effort inference purposes).
+            "json" => match args.first() {
+                Some(Expr::String(path)) => crate::json::infer_json_type(path).ok(),
+                _ => type_args.first().cloned(),
+            },
             _ => {
                 // Arrow-typed local (function value) or a declared function.
                 if let Some(Type::Function { return_type, .. }) = scope.get(name) {

@@ -58,12 +58,12 @@ mod types;
 pub fn resolve_program_types(modules: &[Module]) -> Vec<Module> {
     use std::collections::HashMap;
 
-    let interfaces = collect::collect_interfaces(modules);
+    let (interfaces, interface_type_params) = collect::collect_interfaces(modules);
     let interfaces_map: HashMap<String, arcis_ast::Type> = interfaces
         .iter()
         .map(|t| (t.struct_name().unwrap_or_default().to_string(), t.clone()))
         .collect();
-    let global_aliases = collect::collect_global_aliases(modules);
+    let (global_aliases, alias_type_params) = collect::collect_global_aliases(modules);
     let mut extra = interfaces_map;
     for (name, ty) in global_aliases {
         extra.entry(name).or_insert(ty);
@@ -71,11 +71,15 @@ pub fn resolve_program_types(modules: &[Module]) -> Vec<Module> {
     for (name, _) in collect::collect_enums(modules) {
         extra.entry(name).or_insert_with(arcis_ast::Type::number);
     }
+    let mut extra_type_params = interface_type_params;
+    for (name, tp) in alias_type_params {
+        extra_type_params.entry(name).or_insert(tp);
+    }
     modules
         .iter()
         .map(|m| {
             let mut m = m.clone();
-            collect::resolve_type_aliases(&mut m.program, &extra);
+            collect::resolve_type_aliases(&mut m.program, &extra, &extra_type_params);
             m
         })
         .collect()
@@ -90,7 +94,7 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     // the interface itself (not hash-based), with `extends` chains already
     // merged. Computed from the *original* modules since interface field
     // shapes don't depend on alias resolution.
-    let interfaces = collect::collect_interfaces(modules);
+    let (interfaces, interface_type_params) = collect::collect_interfaces(modules);
     let interfaces_map: HashMap<String, arcis_ast::Type> = interfaces
         .iter()
         .map(|t| (t.struct_name().unwrap_or_default().to_string(), t.clone()))
@@ -104,7 +108,7 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     // to read fields off `Type::Object`). Top-level aliases are collected
     // globally so they resolve across module boundaries; a module's own
     // (function-local) aliases still take priority on a name collision.
-    let global_aliases = collect::collect_global_aliases(modules);
+    let (global_aliases, alias_type_params) = collect::collect_global_aliases(modules);
     let mut extra = interfaces_map.clone();
     for (name, ty) in &global_aliases {
         extra.entry(name.clone()).or_insert_with(|| ty.clone());
@@ -116,11 +120,18 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     for (name, _) in collect::collect_enums(modules) {
         extra.entry(name).or_insert_with(arcis_ast::Type::number);
     }
+    // struct name → its own `<T, U>` list, merging generic interfaces and
+    // generic object-shaped aliases (both collapse to `Type::Object`, which
+    // has no room for type params of its own — see `emit_struct_def`).
+    let mut struct_type_params = interface_type_params;
+    for (name, tp) in &alias_type_params {
+        struct_type_params.entry(name.clone()).or_insert_with(|| tp.clone());
+    }
     let modules: Vec<Module> = modules
         .iter()
         .map(|m| {
             let mut m = m.clone();
-            collect::resolve_type_aliases(&mut m.program, &extra);
+            collect::resolve_type_aliases(&mut m.program, &extra, &struct_type_params);
             m
         })
         .collect();
@@ -135,6 +146,17 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
     let mut all_obj_types = interfaces;
     let mut seen_struct_names: std::collections::HashSet<String> =
         all_obj_types.iter().filter_map(|t| t.struct_name()).map(str::to_string).collect();
+    // Generic, object-shaped aliases (`type Pair<A,B> = {...}`) never get
+    // inlined at usage sites (see `collect::substitute_named`'s
+    // `Type::Generic` handling) — they need their one real struct added
+    // here explicitly, the same as an interface.
+    for (name, ty) in &global_aliases {
+        if alias_type_params.contains_key(name) && matches!(ty, arcis_ast::Type::Object { .. }) {
+            if seen_struct_names.insert(name.clone()) {
+                all_obj_types.push(ty.clone());
+            }
+        }
+    }
     for ty in collect::collect_all_object_types(modules) {
         if let Some(name) = ty.struct_name() {
             if seen_struct_names.insert(name.to_string()) {
@@ -185,6 +207,11 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
         env.add_program(&m.program);
     }
 
+    // Once ANY module calls the `json(...)` builtin, every generated struct
+    // gets `#[derive(serde::Deserialize)]` — see `types::emit_struct_def`'s
+    // doc comment for why this is deliberately program-wide, not per-struct.
+    let uses_json = modules.iter().any(|m| arcis_ast::contains_json_call(&m.program));
+
     let mut out = Vec::with_capacity(modules.len());
     for (i, m) in modules.iter().enumerate() {
         let is_root = i == 0;
@@ -193,6 +220,8 @@ pub fn generate_all(modules: &[Module]) -> Result<Vec<(String, String)>, String>
             is_root,
             modules,
             &all_obj_types,
+            &struct_type_params,
+            uses_json,
             &enums,
             &enum_names,
             &type_level_names,

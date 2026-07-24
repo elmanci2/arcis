@@ -23,6 +23,8 @@ pub(crate) fn generate(
     is_root: bool,
     modules: &[Module],
     all_obj_types: &[Type],
+    struct_type_params: &HashMap<String, Vec<String>>,
+    uses_json: bool,
     enums: &[(String, Vec<(String, Option<i64>)>)],
     enum_names: &HashSet<String>,
     type_level_names: &HashSet<String>,
@@ -35,6 +37,13 @@ pub(crate) fn generate(
     let reassigned = crate::collect::collect_reassigned(&m.program);
     let types = crate::collect::collect_types(&m.program);
     let type_scope = crate::collect::collect_type_scope(&m.program);
+    let struct_fields: HashMap<String, Vec<(String, Box<Type>, bool)>> = all_obj_types
+        .iter()
+        .filter_map(|t| match t {
+            Type::Object { name, fields } => Some((name.clone(), fields.clone())),
+            _ => None,
+        })
+        .collect();
     // Local names bound by namespace imports (`import utils;` /
     // `import utils as u;`) — member access on them (`u.item`) must emit
     // a Rust path (`u::item`), not a field access.
@@ -63,6 +72,7 @@ pub(crate) fn generate(
         namespace_names: &namespace_names,
         env,
         type_scope: &type_scope,
+        struct_fields: &struct_fields,
     };
 
     // The root declares every sub-module and defines the object-type
@@ -72,8 +82,11 @@ pub(crate) fn generate(
             out.push_str(&format!("mod {};\n", other.id));
         }
         out.push('\n');
+        let no_type_params: Vec<String> = Vec::new();
         for ty in all_obj_types {
-            crate::types::emit_struct_def(&mut out, ty);
+            let type_params =
+                ty.struct_name().and_then(|n| struct_type_params.get(n)).unwrap_or(&no_type_params);
+            crate::types::emit_struct_def(&mut out, ty, type_params, uses_json);
         }
         for (name, variants) in enums {
             crate::types::emit_enum_def(&mut out, name, variants);
@@ -365,6 +378,7 @@ fn emit_module_const(out: &mut String, stmt: &Stmt, ctx: &Ctx) {
         namespace_names: ctx.namespace_names,
         env: ctx.env,
         type_scope: ctx.type_scope,
+        struct_fields: ctx.struct_fields,
     };
     crate::expr::emit(out, value, &nested);
     out.push_str(";\n\n");

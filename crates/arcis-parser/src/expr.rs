@@ -15,7 +15,7 @@
 //!
 //! Each level calls the level below until it reaches an atom.
 
-use arcis_ast::{ArrayElement, ArrowBody, BinOp, Expr, ObjectField, Param, UnaryOp};
+use arcis_ast::{ArrayElement, ArrowBody, BinOp, Expr, ObjectField, Param, Type, UnaryOp};
 use arcis_lexer::TokenKind;
 
 use crate::error::ParseError;
@@ -285,6 +285,7 @@ impl Parser {
                     expr = Expr::Call {
                         callee: Box::new(expr),
                         args,
+                        type_args: Vec::new(),
                     };
                 }
                 // Non-null assertion: `expr!`. Distinct from prefix `!`
@@ -313,6 +314,41 @@ impl Parser {
             }
         }
         Ok(expr)
+    }
+
+    /// Attempt `< Type (, Type)* >` immediately followed by `(`, right after
+    /// a bare call-target identifier. Returns `None` (and leaves `self.pos`
+    /// untouched) on any deviation — a missing `<`, a `parse_type()` error,
+    /// a missing `>`, or a `>` not directly followed by `(` — so the caller
+    /// falls back to treating `<` as the ordinary comparison operator. This
+    /// deliberately resolves the rare, genuinely ambiguous case (`f < g >
+    /// (x)`, spaced like a comparison chain) as turbofish once `g` parses as
+    /// a valid type and `(` follows — the same trade-off every other
+    /// angle-bracket-generics language (C++, Rust, TypeScript) makes.
+    fn try_parse_call_type_args(&mut self) -> Option<Vec<Type>> {
+        if !self.check(&TokenKind::Lt) {
+            return None;
+        }
+        let checkpoint = self.pos;
+        self.advance(); // <
+        let mut args = Vec::new();
+        loop {
+            match self.parse_type() {
+                Ok(t) => args.push(t),
+                Err(_) => {
+                    self.pos = checkpoint;
+                    return None;
+                }
+            }
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+        }
+        if !self.matches(&TokenKind::Gt) || !self.check(&TokenKind::LParen) {
+            self.pos = checkpoint;
+            return None;
+        }
+        Some(args)
     }
 
     fn parse_atom(&mut self) -> Result<Expr, ParseError> {
@@ -354,11 +390,20 @@ impl Parser {
                         return Ok(Expr::Call {
                             callee: Box::new(Expr::Path { segments }),
                             args,
+                            type_args: Vec::new(),
                         });
                     }
                     return Ok(Expr::Path { segments });
                 }
-                if self.check(&TokenKind::LParen) {
+                // Explicit turbofish type args: `identity<number>(5)`. `<`
+                // after a bare identifier is ambiguous with the `<`
+                // comparison operator, so this is attempted speculatively
+                // and rolled back on ANY deviation from the exact shape
+                // `< Type (, Type)* >` immediately followed by `(` — same
+                // rollback idiom as `try_parse_arrow_after_lparen` below,
+                // there's no shared checkpoint API to reuse.
+                let type_args = self.try_parse_call_type_args();
+                if type_args.is_some() || self.check(&TokenKind::LParen) {
                     self.advance(); // (
                     let mut args = Vec::new();
                     if !self.check(&TokenKind::RParen) {
@@ -373,6 +418,7 @@ impl Parser {
                     Ok(Expr::Call {
                         callee: Box::new(Expr::Ident(name)),
                         args,
+                        type_args: type_args.unwrap_or_default(),
                     })
                 } else {
                     Ok(Expr::Ident(name))

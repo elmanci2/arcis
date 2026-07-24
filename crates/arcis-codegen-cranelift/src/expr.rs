@@ -68,7 +68,12 @@ pub(crate) fn emit(
         Expr::Binary { op, left, right } => {
             emit_binary(builder, fctx, op, left, right, runtime, user_fns, module)
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, type_args } => {
+            // Generics are Rust-backend-only; the driver rejects any
+            // generic construct before this backend ever runs (see
+            // `arcis-driver/src/build.rs::check_no_generics`), so
+            // `type_args` is always empty here.
+            debug_assert!(type_args.is_empty(), "Cranelift backend reached with call type_args — should have been rejected earlier");
             // Dispatch print, input, method calls, and user functions.
             if let Expr::Ident(fname) = callee.as_ref() {
                 if fname == "print" {

@@ -61,6 +61,14 @@ pub(crate) fn ts_type_to_rust(ty: &Type, is_root: bool) -> String {
             let ps: Vec<String> = params.iter().map(|p| ts_type_to_rust(p, is_root)).collect();
             format!("fn({}) -> {}", ps.join(", "), ts_type_to_rust(return_type, is_root))
         }
+        Type::Generic { name, args } => {
+            let inner: Vec<String> = args.iter().map(|a| ts_type_to_rust(a, is_root)).collect();
+            if is_root {
+                format!("{}<{}>", name, inner.join(", "))
+            } else {
+                format!("crate::{}<{}>", name, inner.join(", "))
+            }
+        }
     }
 }
 
@@ -105,8 +113,18 @@ pub(crate) fn infer_expr_rust_type(e: &Expr) -> Option<String> {
 
 /// Emit a `pub struct <name> { pub field: type, ... }` for an inline
 /// object type. Called only from the root module. Optional fields (`?`)
-/// become `Option<T>`.
-pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
+/// become `Option<T>`. `type_params` is the struct's own `<T, U>` list
+/// (empty for a non-generic interface/object type) — `#[derive(Default)]`
+/// on a generic struct auto-adds the right `T: Default` bound on the
+/// generated impl, so no manual bound syntax is needed here. `derive_deserialize`
+/// is `true` for every struct in the program once the program calls the
+/// `json(...)` builtin anywhere (not just the JSON-shaped ones — struct
+/// dedup by shape-hash means a JSON-inferred shape could coincide with an
+/// unrelated plain object literal's shape, and tracking that distinction
+/// per-struct isn't worth the complexity); serde's derive automatically
+/// treats a missing JSON key as `None` for genuinely `Option<T>` fields, no
+/// extra attribute needed.
+pub(crate) fn emit_struct_def(out: &mut String, ty: &Type, type_params: &[String], derive_deserialize: bool) {
     let (name, fields) = match ty {
         Type::Object { name, fields } => (name, fields),
         _ => return,
@@ -114,9 +132,18 @@ pub(crate) fn emit_struct_def(out: &mut String, ty: &Type) {
     // `Default` backs `.find()`'s not-found value and `.pop()` on empty
     // arrays; `Debug` gives a printing fallback for values whose type
     // couldn't be resolved to a `Display`-able primitive.
-    out.push_str("#[derive(Clone, Debug, Default)]\n");
+    if derive_deserialize {
+        out.push_str("#[derive(Clone, Debug, Default, serde::Deserialize)]\n");
+    } else {
+        out.push_str("#[derive(Clone, Debug, Default)]\n");
+    }
     out.push_str("pub struct ");
     out.push_str(name);
+    if !type_params.is_empty() {
+        out.push('<');
+        out.push_str(&type_params.join(", "));
+        out.push('>');
+    }
     out.push_str(" {\n");
     for (k, fty, optional) in fields {
         out.push_str("    pub ");

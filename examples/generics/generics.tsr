@@ -1,0 +1,62 @@
+// generics.tsr — generic functions, interfaces, and type aliases.
+//
+// Rust-backend only: generics emit real Rust generics and let rustc do all
+// the composition work (monomorphization, nested generics, etc.) — there is
+// no Arcis-side generics runtime. `arcis run examples/generics/generics.tsr
+// --backend cranelift` fails with a clear error instead of miscompiling.
+
+// ============================================================
+// 1. Generic function — T inferred from the argument
+// ============================================================
+function identity<T>(x: T): T {
+    return x;
+}
+print("identity(5) = " + identity(5));
+print("identity(\"hi\") = " + identity("hi"));
+
+// ============================================================
+// 2. Generic function — T only in the return type, needs explicit
+//    turbofish (this is the shape a future `JSON.parse<T>(text): T` needs).
+// ============================================================
+function makeEmpty<T>(): T[] {
+    return [];
+}
+let nums: number[] = makeEmpty<number>();
+print("makeEmpty<number>().length = " + nums.length);
+
+// ============================================================
+// 3. Generic interface
+// ============================================================
+interface Holder<T> {
+    value: T;
+}
+let held: Holder<number> = { value: 42 };
+print("held.value = " + held.value);
+
+// ============================================================
+// 4. Generic type alias
+// ============================================================
+type Pair<A, B> = { first: A, second: B };
+let p: Pair<string, number> = { first: "answer", second: 42 };
+print("pair = (" + p.first + ", " + p.second + ")");
+
+// ============================================================
+// 5. Nested generics
+// ============================================================
+let nested: Holder<Holder<number>> = { value: { value: 7 } };
+print("nested.value.value = " + nested.value.value);
+
+
+
+import json
+
+const  json_data = json("./data.json");
+
+json_data.users[0]?.name
+
+json_data.users.push({
+    name:"andres",
+    id:2,
+}).write()
+
+json_data.users.find(x => x.id == 2).name

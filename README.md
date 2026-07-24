@@ -1,9 +1,10 @@
 # Arcis
 
 A minimal **TypeScript-like** language (`.tsr`) written in Rust that compiles to
-**native binaries** — by default through a Cranelift code generator (no Rust
-toolchain needed at runtime), or alternatively by transpiling to Rust and
-delegating the final step to `rustc`/`cargo` (`--backend rust`).
+**native binaries** — by default by transpiling to Rust and delegating the
+final step to `rustc`/`cargo`, or alternatively through a Cranelift code
+generator that needs no Rust toolchain at runtime (`--backend cranelift`,
+though it doesn't yet support generics or native JSON — see "Backends" below).
 
 The syntax is identical to TypeScript — same keywords, same `let`/`const`,
 same `function` declarations. The difference is that `.tsr` files do not run
@@ -72,15 +73,20 @@ To update after changes: `cargo install --path . --force`.
 ## Backends
 
 `arcis` ships with **two** compiler backends, selectable per command via the
-`--backend` flag. The default is the Cranelift native code generator, which
-does **not** depend on a Rust toolchain at runtime; passing `--backend rust`
-switches to the original Rust-source backend (the most feature-complete one —
-prefer it if you hit a Cranelift limitation).
+`--backend` flag. The default is the Rust-source backend (needs `rustc`/
+`cargo` on the machine that builds it) — it's the most feature-complete one,
+and it's the only one that supports **generics** (`function f<T>(...)`,
+`interface Box<T>`, `type Pair<A,B>`) and **native JSON** (`json(path)`).
+Passing `--backend cranelift` switches to the Cranelift native code
+generator, which does **not** depend on a Rust toolchain at runtime, at the
+cost of a few newer features — a program using generics or `json(...)`
+fails to build on it with a clear error telling you to switch back to
+`--backend rust`.
 
-| Backend    | Toolchain needed at runtime                | Library dependencies at runtime          | Default |
-|------------|--------------------------------------------|-----------------------------------------|---------|
-| `cranelift`| only `cc` (gcc, clang, …)                  | libc                                    | ✓       |
-| `rust`     | `rustc` / `cargo`                          | Rust `std`                              |         |
+| Backend    | Toolchain needed at runtime                | Library dependencies at runtime          | Default | Generics |
+|------------|--------------------------------------------|-------------------------------------------|---------|----------|
+| `rust`     | `rustc` / `cargo`                          | Rust `std`                                | ✓       | ✓        |
+| `cranelift`| only `cc` (gcc, clang, …)                  | libc                                      |         |          |
 
 ```bash
 arcis build --backend rust      examples/01-hello/hello.tsr
@@ -102,8 +108,11 @@ for backend-specific design notes and caveats (e.g. how `try`/`catch` is
 built on `setjmp`/`longjmp` there instead of `catch_unwind`). Unions and
 interfaces/type aliases used as object shapes still erase the
 same way as the Rust backend; closures-with-capture, destructuring,
-template literals, classes, and generics are not implemented in either
-backend yet.
+template literals, and classes are not implemented in either backend yet.
+**Generics** (`function f<T>(...)`, `interface Box<T>`, `type Pair<A,B>`) and
+**native JSON** (`json(path)`) are both Rust-backend only — the Cranelift
+backend rejects either construct with a clear error rather than
+miscompiling it.
 
 ## Supported subset
 
@@ -135,6 +144,8 @@ backend yet.
 - Operators: `+ - * / % == != < > <= >= && || !`
 - Comments `//` and `/* ... */`
 - **Modules**: ES/TS-style `import { a } from "mod"` AND Python-style `from mod import a` — both work; ES-style `export`, including `export interface/type/enum` (see [Modules](#modules))
+- **Generics** (Rust backend only): `function f<T>(x: T): T`, `interface Box<T>`, `type Pair<A,B>`; call sites infer type args from arguments or accept explicit turbofish (`f<number>(5)`)
+- **Native JSON** (Rust backend only): `json("./data.json")` reads and infers the file's real shape at compile time — no hand-written interface needed; `json<T>(path)` for a non-literal path
 
 ## Example
 
@@ -265,7 +276,7 @@ Full example: `examples/mods/`.
 
 ## Out of scope (for now)
 
-- Classes, generics
+- Classes
 - Closures that capture variables (arrow functions are supported, but
   non-capturing only), destructuring, template literals
 - `bigint` literals

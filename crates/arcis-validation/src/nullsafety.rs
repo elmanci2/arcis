@@ -183,7 +183,7 @@ fn check_expr(e: &Expr, scope: &Scope, env: &TypeEnv, out: &mut Vec<NullSafetyIs
                 ));
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             check_expr(callee, scope, env, out, line, col);
             for a in args {
                 check_expr(a, scope, env, out, line, col);

@@ -131,7 +131,7 @@ fn collect_uses_expr(expr: &Expr, used: &mut HashSet<String>) {
         Expr::Ident(name) => {
             used.insert(name.clone());
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             collect_uses_expr(callee, used);
             for a in args {
                 collect_uses_expr(a, used);

@@ -222,6 +222,8 @@ impl Parser {
             (String::new(), fn_keyword_line, fn_keyword_col)
         };
 
+        let type_params = self.parse_type_param_list()?;
+
         self.expect(&TokenKind::LParen, "`(` after function name")?;
         let mut params = Vec::new();
         if !self.check(&TokenKind::RParen) {
@@ -258,12 +260,36 @@ impl Parser {
 
         Ok(Function {
             name,
+            type_params,
             params,
             return_type,
             body,
             line: name_line,
             col: name_col,
         })
+    }
+
+    /// `<T, U>` — a type-parameter list, immediately after a `function`,
+    /// `interface`, or `type` alias name. Returns an empty `Vec` (and
+    /// consumes nothing) when there's no `<` — the non-generic case.
+    fn parse_type_param_list(&mut self) -> Result<Vec<String>, ParseError> {
+        if !self.check(&TokenKind::Lt) {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        let mut params = Vec::new();
+        loop {
+            let tok = self.expect(&TokenKind::Ident(String::new()), "type parameter name")?;
+            match tok.kind {
+                TokenKind::Ident(s) => params.push(s),
+                _ => unreachable!(),
+            }
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::Gt, "`>` after type parameter list")?;
+        Ok(params)
     }
 
     /// `type Name = <type>;`
@@ -274,11 +300,13 @@ impl Parser {
             TokenKind::Ident(s) => s.clone(),
             _ => unreachable!(),
         };
+        let type_params = self.parse_type_param_list()?;
         self.expect(&TokenKind::Eq, "`=` after type alias name")?;
         let ty = self.parse_type()?;
         self.expect(&TokenKind::Semi, "`;` after type alias")?;
         Ok(Stmt::TypeAlias {
             name,
+            type_params,
             ty,
             line: kw_tok.line,
             col: kw_tok.col,
@@ -293,6 +321,7 @@ impl Parser {
             TokenKind::Ident(s) => s.clone(),
             _ => unreachable!(),
         };
+        let type_params = self.parse_type_param_list()?;
         let mut extends = Vec::new();
         if self.matches(&TokenKind::Extends) {
             loop {
@@ -321,6 +350,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "`}` closing interface body")?;
         Ok(Stmt::Interface {
             name,
+            type_params,
             extends,
             fields,
             line: name_tok.line,

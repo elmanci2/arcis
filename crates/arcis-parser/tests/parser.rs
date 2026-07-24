@@ -386,3 +386,124 @@ fn valid_for_update_assignment_still_parses() {
         other => panic!("expected For, got {:?}", other),
     }
 }
+
+// ── Generics ──────────────────────────────────────────────────────────────
+
+#[test]
+fn parses_generic_function_type_params() {
+    let stmts = parse("function identity<T>(x: T): T { return x; }");
+    match &stmts[0] {
+        Stmt::Function(f) => {
+            assert_eq!(f.type_params, vec!["T".to_string()]);
+            assert_eq!(f.params[0].ty, arcis_ast::Type::Named("T".to_string()));
+            assert_eq!(f.return_type, arcis_ast::Type::Named("T".to_string()));
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_generic_interface_and_type_alias() {
+    let stmts = parse("interface Box<T> { value: T }\ntype Pair<A, B> = { first: A, second: B };");
+    match &stmts[0] {
+        Stmt::Interface { type_params, .. } => assert_eq!(type_params, &vec!["T".to_string()]),
+        other => panic!("expected Interface, got {:?}", other),
+    }
+    match &stmts[1] {
+        Stmt::TypeAlias { type_params, .. } => {
+            assert_eq!(type_params, &vec!["A".to_string(), "B".to_string()])
+        }
+        other => panic!("expected TypeAlias, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_generic_type_usage_in_type_position() {
+    let stmts = parse("let b: Box<number> = x;");
+    match &stmts[0] {
+        Stmt::Let { ty: Some(arcis_ast::Type::Generic { name, args }), .. } => {
+            assert_eq!(name, "Box");
+            assert_eq!(args, &vec![arcis_ast::Type::number()]);
+        }
+        other => panic!("expected Let with Type::Generic annotation, got {:?}", other),
+    }
+}
+
+#[test]
+fn ordinary_comparison_still_parses_as_comparison_not_turbofish() {
+    // `a < b` — no call site involved, must be an ordinary comparison.
+    let stmts = parse("let r = a < b;");
+    match &stmts[0] {
+        Stmt::Let { value: Expr::Binary { op: arcis_ast::BinOp::Lt, .. }, .. } => {}
+        other => panic!("expected Binary(Lt), got {:?}", other),
+    }
+}
+
+#[test]
+fn chained_comparison_still_parses_as_comparison_not_turbofish() {
+    // `a < b > c` — after `a`, `< b` looks like it could start a type-arg
+    // list, but `c` isn't `(`, so this must roll back to two chained
+    // comparisons, not a botched generic-call attempt.
+    let stmts = parse("let r = a < b > c;");
+    match &stmts[0] {
+        Stmt::Let { value: Expr::Binary { op: arcis_ast::BinOp::Gt, left, .. }, .. } => {
+            assert!(matches!(left.as_ref(), Expr::Binary { op: arcis_ast::BinOp::Lt, .. }));
+        }
+        other => panic!("expected Binary(Gt, Binary(Lt, ..), ..), got {:?}", other),
+    }
+}
+
+#[test]
+fn call_in_boolean_expression_is_unaffected_by_turbofish_parsing() {
+    // `print(a < b)` — inside a call's ARGUMENT list, `a < b` must still be
+    // an ordinary comparison (this exercises the same `Lt`-after-`Ident`
+    // code path as turbofish, just nested one level deeper).
+    let stmts = parse("print(a < b);");
+    match &stmts[0] {
+        Stmt::Expr(Expr::Call { args, type_args, .. }) => {
+            assert!(type_args.is_empty());
+            assert!(matches!(&args[0], Expr::Binary { op: arcis_ast::BinOp::Lt, .. }));
+        }
+        other => panic!("expected Call, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_explicit_turbofish_call() {
+    let stmts = parse("let x = identity<number>(5);");
+    match &stmts[0] {
+        Stmt::Let { value: Expr::Call { callee, args, type_args }, .. } => {
+            assert!(matches!(callee.as_ref(), Expr::Ident(name) if name == "identity"));
+            assert_eq!(type_args, &vec![arcis_ast::Type::number()]);
+            assert_eq!(args.len(), 1);
+        }
+        other => panic!("expected Call with type_args, got {:?}", other),
+    }
+}
+
+#[test]
+fn inferred_call_has_empty_type_args() {
+    let stmts = parse("let x = identity(5);");
+    match &stmts[0] {
+        Stmt::Let { value: Expr::Call { type_args, .. }, .. } => assert!(type_args.is_empty()),
+        other => panic!("expected Call, got {:?}", other),
+    }
+}
+
+#[test]
+fn accepted_ambiguity_f_lt_g_gt_paren_resolves_to_turbofish() {
+    // `f < g > (x)`, spaced identically to a comparison chain, is
+    // syntactically indistinguishable from turbofish `f<g>(x)` once `g`
+    // parses as a valid type name and `(` immediately follows `>`. This
+    // resolves to turbofish — the same trade-off every other language with
+    // angle-bracket generics (C++, Rust, TypeScript) makes. Documented here
+    // as an accepted, deliberate behavior, not left unspecified.
+    let stmts = parse("let r = f < g > (x);");
+    match &stmts[0] {
+        Stmt::Let { value: Expr::Call { callee, type_args, .. }, .. } => {
+            assert!(matches!(callee.as_ref(), Expr::Ident(name) if name == "f"));
+            assert_eq!(type_args, &vec![arcis_ast::Type::Named("g".to_string())]);
+        }
+        other => panic!("expected turbofish Call, got {:?}", other),
+    }
+}

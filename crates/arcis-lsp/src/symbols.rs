@@ -482,11 +482,11 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
         Stmt::Break | Stmt::Continue => {}
 
         // ── type-level declarations ────────────────────────────────
-        Stmt::TypeAlias { name, ty, line, col } => {
-            push(out, name.clone(), SymbolKind::TypeAlias, *line, *col, type_label(ty));
+        Stmt::TypeAlias { name, type_params, ty, line, col } => {
+            push(out, generic_name(name, type_params), SymbolKind::TypeAlias, *line, *col, type_label(ty));
         }
-        Stmt::Interface { name, extends, fields, line, col } => {
-            push(out, name.clone(), SymbolKind::Interface, *line, *col, describe_interface(extends, fields));
+        Stmt::Interface { name, type_params, extends, fields, line, col } => {
+            push(out, generic_name(name, type_params), SymbolKind::Interface, *line, *col, describe_interface(extends, fields));
         }
         Stmt::Enum { name, variants, line, col } => {
             let resolved = resolve_enum_variants(variants);
@@ -542,11 +542,11 @@ fn collect_export_decl(inner: &Stmt, out: &mut Vec<Symbol>) {
             collect_expr(value, out);
         }
         Stmt::Function(f) => collect_function(f, out, Some("exported")),
-        Stmt::TypeAlias { name, ty, line, col } => {
-            push_ex(out, name.clone(), SymbolKind::TypeAlias, *line, *col, format!("{} (exported)", type_label(ty)), true);
+        Stmt::TypeAlias { name, type_params, ty, line, col } => {
+            push_ex(out, generic_name(name, type_params), SymbolKind::TypeAlias, *line, *col, format!("{} (exported)", type_label(ty)), true);
         }
-        Stmt::Interface { name, extends, fields, line, col } => {
-            push_ex(out, name.clone(), SymbolKind::Interface, *line, *col, format!("{} (exported)", describe_interface(extends, fields)), true);
+        Stmt::Interface { name, type_params, extends, fields, line, col } => {
+            push_ex(out, generic_name(name, type_params), SymbolKind::Interface, *line, *col, format!("{} (exported)", describe_interface(extends, fields)), true);
         }
         Stmt::Enum { name, variants, line, col } => {
             let resolved = resolve_enum_variants(variants);
@@ -589,7 +589,7 @@ fn collect_expr(expr: &Expr, out: &mut Vec<Symbol>) {
                 }
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             collect_expr(callee, out);
             for a in args {
                 collect_expr(a, out);
@@ -638,6 +638,16 @@ fn collect_expr(expr: &Expr, out: &mut Vec<Symbol>) {
 /// for un-annotated `let`/`const` bindings).
 fn describe_binding(ty: &Option<Type>) -> String {
     ty.as_ref().map(type_label).unwrap_or_else(|| "unknown".to_string())
+}
+
+/// `Name<T, U>` for a generic interface/type-alias symbol name, or plain
+/// `Name` when `type_params` is empty.
+fn generic_name(name: &str, type_params: &[String]) -> String {
+    if type_params.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}<{}>", name, type_params.join(", "))
+    }
 }
 
 fn describe_interface(extends: &[String], fields: &[(String, Box<Type>, bool)]) -> String {
@@ -700,15 +710,24 @@ pub fn type_label(ty: &Type) -> String {
             let ps: Vec<String> = params.iter().map(type_label).collect();
             format!("({}) => {}", ps.join(", "), type_label(return_type))
         }
+        Type::Generic { name, args } => {
+            format!("{}<{}>", name, args.iter().map(type_label).collect::<Vec<_>>().join(", "))
+        }
     }
 }
 
-/// Build a short function signature string like `(a: number, b: number) -> number`.
+/// Build a short function signature string like `(a: number, b: number) -> number`,
+/// or `<T>(a: T) -> T` for a generic function.
 pub fn func_sig(f: &Function) -> String {
+    let type_params = if f.type_params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", f.type_params.join(", "))
+    };
     let params: Vec<String> = f
         .params
         .iter()
         .map(|p| format!("{}: {}", p.name, type_label(&p.ty)))
         .collect();
-    format!("({}) -> {}", params.join(", "), type_label(&f.return_type))
+    format!("{}({}) -> {}", type_params, params.join(", "), type_label(&f.return_type))
 }

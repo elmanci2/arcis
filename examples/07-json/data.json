@@ -1,0 +1,10 @@
+{
+  "name": "arcis",
+  "version": 1,
+  "active": true,
+  "tags": ["compiler", "typescript-like"],
+  "meta": {
+    "id": 7,
+    "maintainer": "elmanci2"
+  }
+}

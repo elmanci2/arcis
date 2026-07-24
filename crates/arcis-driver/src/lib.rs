@@ -31,10 +31,13 @@ mod rustc;
 /// Which codegen backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
-    /// Lower AST to Rust source, then invoke `rustc`/`cargo`.
+    /// Default: lower AST to Rust source, then invoke `rustc`/`cargo`.
+    /// Required for generics (`function f<T>(...)`, `interface Box<T>`,
+    /// `type Pair<A,B>`) — the Cranelift backend rejects them outright.
     Rust,
-    /// Default: lower AST directly to Cranelift IR; link via `cc` against the
-    /// bundled C runtime. Does **not** depend on `rustc` being installed.
+    /// Lower AST directly to Cranelift IR; link via `cc` against the
+    /// bundled C runtime. Does **not** depend on `rustc` being installed,
+    /// but does not support generics (see `build::check_no_generics`).
     Cranelift,
 }
 
@@ -62,7 +65,7 @@ impl Backend {
 
 impl Default for Backend {
     fn default() -> Self {
-        Backend::Cranelift
+        Backend::Rust
     }
 }
 

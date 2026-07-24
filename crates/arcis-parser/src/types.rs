@@ -155,6 +155,21 @@ impl Parser {
                 });
             }
         };
+        // `Name<Arg1, Arg2>` — a parameterized use of a generic interface /
+        // type alias. Unambiguous here: `<`/`>` never mean anything else in
+        // type position, so no backtracking is needed (unlike at call sites).
+        if let Type::Named(name) = &ty {
+            if self.check(&TokenKind::Lt) {
+                self.advance();
+                let name = name.clone();
+                let mut args = vec![self.parse_type()?];
+                while self.matches(&TokenKind::Comma) {
+                    args.push(self.parse_type()?);
+                }
+                self.expect(&TokenKind::Gt, "`>` after generic type arguments")?;
+                return Ok(Type::Generic { name, args });
+            }
+        }
         Ok(ty)
     }
 

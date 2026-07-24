@@ -1,0 +1,9 @@
+[package]
+name = "json-example"
+version = "0.1.0"
+edition = "2021"
+
+# `json(...)` needs serde/serde_json at runtime — the driver auto-injects
+# them into [dependencies] the first time a build sees a `json(...)` call,
+# so this file just needs to exist (the direct-rustc layout used by every
+# other example can't pull in external crates at all).

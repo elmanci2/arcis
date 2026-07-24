@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use arcis_ast::Stmt;
+use arcis_ast::{ArrayElement, ArrowBody, Expr, ExportDefault, Function, ObjectField, Program, Stmt, Type};
 use arcis_linker::Module;
 
 /// Run the full pipeline: resolve modules, validate them, generate sources
@@ -109,6 +109,40 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
         ));
     }
 
+    // `json(...)` calls: `infer.rs`'s type inference treats a bad path/
+    // malformed JSON permissively (so the LSP stays resilient on every
+    // keystroke) — this is the authoritative re-check that turns that into
+    // a real compile error instead of a silently-broken binary.
+    let mut json_issues = Vec::new();
+    for m in &modules {
+        for issue in arcis_validation::check_json_calls(&m.program) {
+            json_issues.push(format!(
+                "{}:{}:{}: {}",
+                m.path.display(),
+                issue.line,
+                issue.col,
+                issue.message
+            ));
+        }
+    }
+    if !json_issues.is_empty() {
+        return Err(format!(
+            "json error{}:\n{}",
+            if json_issues.len() == 1 { "" } else { "s" },
+            json_issues.join("\n")
+        ));
+    }
+
+    // Generics are Rust-backend-only (see `check_no_generics`'s doc comment
+    // for why this can't just be left to `arcis-codegen-cranelift`'s own
+    // `Result` plumbing — some of its callers silently swallow `from_ast`
+    // errors and would miscompile instead of rejecting).
+    if backend == super::Backend::Cranelift {
+        for m in &modules {
+            check_no_generics(&m.program, &m.path.display().to_string())?;
+        }
+    }
+
     let bin_dir = PathBuf::from("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("could not create `bin/`: {}", e))?;
     let root_id = modules[0].id.clone();
@@ -169,10 +203,262 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
     }
 }
 
+/// Reject every generic construct (a `function`/`interface`/`type` alias
+/// declared with `<T, ...>`, an explicit-turbofish call `f<T>(...)`, or a
+/// `Type::Generic` usage anywhere in a type position) AND every `json(...)`
+/// call, before the Cranelift backend ever runs. Both are Rust-backend-only
+/// (`json(...)`'s runtime deserialization leans on `serde`, same as
+/// generics leaning on real Rust generics); this is the ONE place both
+/// guarantees are enforced.
+///
+/// Deliberately NOT delegated to `arcis-codegen-cranelift`'s own type
+/// lowering (`types::from_ast`): several of its callers do
+/// `.unwrap_or(ArcisType::Number)` on `from_ast`'s `Result`, silently
+/// swallowing an `Err` and treating a generic param/return as if it were
+/// `f64` — miscompiling instead of rejecting. Running this walk once, here,
+/// before either backend's real work starts, is airtight regardless of what
+/// any downstream code does with a `Result`.
+fn check_no_generics(program: &Program, path: &str) -> Result<(), String> {
+    for stmt in &program.stmts {
+        check_stmt_no_generics(stmt, path)?;
+    }
+    Ok(())
+}
+
+fn generics_err(path: &str, kind: &str, name: &str) -> String {
+    format!("{path}: generic {kind} `{name}` is not yet supported by the Cranelift backend — use --backend rust")
+}
+
+fn generic_usage_err(path: &str) -> String {
+    format!("{path}: use of a generic type is not yet supported by the Cranelift backend — use --backend rust")
+}
+
+fn json_unsupported_err(path: &str) -> String {
+    format!("{path}: json(...) is not supported by the Cranelift backend — use --backend rust")
+}
+
+fn check_ty_no_generics(ty: Option<&Type>, path: &str) -> Result<(), String> {
+    match ty {
+        Some(t) if type_contains_generic(t) => Err(generic_usage_err(path)),
+        _ => Ok(()),
+    }
+}
+
+fn type_contains_generic(ty: &Type) -> bool {
+    match ty {
+        Type::Generic { .. } => true,
+        Type::Array(inner) | Type::Optional(inner) => type_contains_generic(inner),
+        Type::Object { fields, .. } => fields.iter().any(|(_, t, _)| type_contains_generic(t)),
+        Type::Union(members) | Type::Intersection(members) => members.iter().any(type_contains_generic),
+        Type::Function { params, return_type } => {
+            params.iter().any(type_contains_generic) || type_contains_generic(return_type)
+        }
+        _ => false,
+    }
+}
+
+fn check_function_no_generics(f: &Function, path: &str) -> Result<(), String> {
+    if !f.type_params.is_empty() {
+        return Err(generics_err(path, "function", &f.name));
+    }
+    for p in &f.params {
+        check_ty_no_generics(Some(&p.ty), path)?;
+    }
+    check_ty_no_generics(Some(&f.return_type), path)?;
+    for s in &f.body {
+        check_stmt_no_generics(s, path)?;
+    }
+    Ok(())
+}
+
+fn check_stmt_no_generics(stmt: &Stmt, path: &str) -> Result<(), String> {
+    match stmt {
+        Stmt::Let { ty, value, .. } | Stmt::Const { ty, value, .. } => {
+            check_ty_no_generics(ty.as_ref(), path)?;
+            check_expr_no_generics(value, path)
+        }
+        Stmt::Assign { value, .. } => check_expr_no_generics(value, path),
+        Stmt::AssignIndex { index, value, .. } => {
+            check_expr_no_generics(index, path)?;
+            check_expr_no_generics(value, path)
+        }
+        Stmt::AssignMember { object, value, .. } => {
+            check_expr_no_generics(object, path)?;
+            check_expr_no_generics(value, path)
+        }
+        Stmt::Function(f) => check_function_no_generics(f, path),
+        Stmt::Return(Some(e)) | Stmt::Throw(e) | Stmt::Expr(e) => check_expr_no_generics(e, path),
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => Ok(()),
+        Stmt::If { condition, then_branch, else_branch } => {
+            check_expr_no_generics(condition, path)?;
+            for s in then_branch {
+                check_stmt_no_generics(s, path)?;
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    check_stmt_no_generics(s, path)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::While { condition, body } => {
+            check_expr_no_generics(condition, path)?;
+            for s in body {
+                check_stmt_no_generics(s, path)?;
+            }
+            Ok(())
+        }
+        Stmt::For { init, condition, update, body } => {
+            if let Some(i) = init {
+                check_stmt_no_generics(i, path)?;
+            }
+            if let Some(c) = condition {
+                check_expr_no_generics(c, path)?;
+            }
+            if let Some(u) = update {
+                check_stmt_no_generics(u, path)?;
+            }
+            for s in body {
+                check_stmt_no_generics(s, path)?;
+            }
+            Ok(())
+        }
+        Stmt::ForOf { ty, iterable, body, .. } => {
+            check_ty_no_generics(ty.as_ref(), path)?;
+            check_expr_no_generics(iterable, path)?;
+            for s in body {
+                check_stmt_no_generics(s, path)?;
+            }
+            Ok(())
+        }
+        Stmt::Switch { discriminant, cases } => {
+            check_expr_no_generics(discriminant, path)?;
+            for case in cases {
+                for v in &case.values {
+                    check_expr_no_generics(v, path)?;
+                }
+                for s in &case.body {
+                    check_stmt_no_generics(s, path)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::Try { body, catch_body, .. } => {
+            for s in body {
+                check_stmt_no_generics(s, path)?;
+            }
+            for s in catch_body {
+                check_stmt_no_generics(s, path)?;
+            }
+            Ok(())
+        }
+        Stmt::Import { .. } | Stmt::FromImport { .. } | Stmt::ExportSpec(_) | Stmt::Enum { .. } => Ok(()),
+        Stmt::ExportDecl(inner) => check_stmt_no_generics(inner, path),
+        Stmt::ExportDefault(ExportDefault::Function(f)) => check_function_no_generics(f, path),
+        Stmt::ExportDefault(ExportDefault::Expr(e)) => check_expr_no_generics(e, path),
+        Stmt::TypeAlias { type_params, ty, .. } => {
+            if !type_params.is_empty() {
+                // The declaration itself is fine to have around (its own
+                // body necessarily mentions its own type params, which
+                // aren't a `Type::Generic` usage) — only a concrete,
+                // non-generic alias's underlying type needs checking here.
+                return Ok(());
+            }
+            check_ty_no_generics(Some(ty), path)
+        }
+        Stmt::Interface { type_params, fields, .. } => {
+            if !type_params.is_empty() {
+                return Ok(());
+            }
+            for (_, t, _) in fields {
+                check_ty_no_generics(Some(t), path)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn check_expr_no_generics(e: &Expr, path: &str) -> Result<(), String> {
+    match e {
+        Expr::Call { callee, args, type_args } => {
+            if matches!(callee.as_ref(), Expr::Ident(n) if n == "json") {
+                return Err(json_unsupported_err(path));
+            }
+            if !type_args.is_empty() {
+                let name = match callee.as_ref() {
+                    Expr::Ident(n) => n.clone(),
+                    _ => "<call>".to_string(),
+                };
+                return Err(generics_err(path, "call", &name));
+            }
+            check_expr_no_generics(callee, path)?;
+            for a in args {
+                check_expr_no_generics(a, path)?;
+            }
+            Ok(())
+        }
+        Expr::Unary { operand, .. }
+        | Expr::TypeOf(operand)
+        | Expr::NonNullAssertion(operand)
+        | Expr::AsConst(operand) => check_expr_no_generics(operand, path),
+        Expr::Binary { left, right, .. } => {
+            check_expr_no_generics(left, path)?;
+            check_expr_no_generics(right, path)
+        }
+        Expr::Member { object, .. } => check_expr_no_generics(object, path),
+        Expr::Index { object, index } => {
+            check_expr_no_generics(object, path)?;
+            check_expr_no_generics(index, path)
+        }
+        Expr::ArrayLiteral { elements } => {
+            for el in elements {
+                match el {
+                    ArrayElement::Item(e) | ArrayElement::Spread(e) => check_expr_no_generics(e, path)?,
+                }
+            }
+            Ok(())
+        }
+        Expr::ObjectLiteral { fields } => {
+            for f in fields {
+                match f {
+                    ObjectField::KV(_, e) | ObjectField::Spread(e) => check_expr_no_generics(e, path)?,
+                }
+            }
+            Ok(())
+        }
+        Expr::AsAssertion { expr, ty } => {
+            check_ty_no_generics(Some(ty), path)?;
+            check_expr_no_generics(expr, path)
+        }
+        Expr::Arrow { params, return_type, body } => {
+            for p in params {
+                check_ty_no_generics(Some(&p.ty), path)?;
+            }
+            check_ty_no_generics(return_type.as_ref(), path)?;
+            match body {
+                ArrowBody::Expr(e) => check_expr_no_generics(e, path),
+                ArrowBody::Block(stmts) => {
+                    for s in stmts {
+                        check_stmt_no_generics(s, path)?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+        Expr::Number(_)
+        | Expr::String(_)
+        | Expr::Bool(_)
+        | Expr::Ident(_)
+        | Expr::Path { .. }
+        | Expr::Null
+        | Expr::Undefined => Ok(()),
+    }
+}
+
 /// Write the files for the **Cargo** layout (`bin/<pkg>/Cargo.toml` +
 /// `bin/<pkg>/src/<id>.rs`).
 fn write_cargo_layout(
-    _modules: &[Module],
+    modules: &[Module],
     generated: &[(String, String)],
     bin_dir: &Path,
     user_cargo_toml: &Path,
@@ -222,12 +508,19 @@ fn write_cargo_layout(
     // by default searches for `src/*.rs` at the workspace root — not
     // where the Cargo.toml lives. Adding an empty `[workspace]` section
     // makes the sub-project self-contained.
-    let mut cargo_contents = fs::read(&dest_cargo)
+    let mut cargo_contents = fs::read_to_string(&dest_cargo)
         .map_err(|e| format!("could not read `{}`: {}", dest_cargo.display(), e))?;
-    if !cargo_contents.ends_with(b"\n") {
-        cargo_contents.push(b'\n');
+    // `json(...)` needs `serde`/`serde_json` at runtime — inject them
+    // automatically (rather than requiring the user to hand-uncomment the
+    // lines `arcis init` scaffolds) so `json(...)` feels like a real
+    // builtin, not something that needs manual dependency wiring.
+    if modules.iter().any(|m| arcis_ast::contains_json_call(&m.program)) {
+        cargo_contents = ensure_json_deps(&cargo_contents);
     }
-    cargo_contents.extend_from_slice(b"\n[workspace]\n");
+    if !cargo_contents.ends_with('\n') {
+        cargo_contents.push('\n');
+    }
+    cargo_contents.push_str("\n[workspace]\n");
     fs::write(&dest_cargo, cargo_contents)
         .map_err(|e| format!("could not write `{}`: {}", dest_cargo.display(), e))?;
 
@@ -263,6 +556,17 @@ fn write_rustc_layout(
                 .to_string(),
         );
     }
+    // Same story for `json(...)` — its runtime deserialization needs
+    // `serde`/`serde_json`, which only a Cargo-layout build can carry (bare
+    // `rustc` can't fetch crates from crates.io at all).
+    if has_json_builtin_call(modules) {
+        return Err(
+            "to use json(...) you need a `Cargo.toml` next to `main.tsr` \
+             (it needs `serde`/`serde_json` at runtime, auto-added once a \
+             Cargo.toml exists). Create one (or run `arcis init` again)."
+                .to_string(),
+        );
+    }
     for (id, src) in generated {
         let p = bin_dir.join(format!("{}.rs", id));
         fs::write(&p, src)
@@ -287,4 +591,104 @@ fn has_crate_import(modules: &[Module]) -> bool {
             _ => false,
         })
     })
+}
+
+/// `true` if any module calls the `json(...)` builtin anywhere.
+fn has_json_builtin_call(modules: &[Module]) -> bool {
+    modules.iter().any(|m| arcis_ast::contains_json_call(&m.program))
+}
+
+/// Ensure `serde`/`serde_json` are present as active (non-comment)
+/// dependencies in a Cargo.toml's text, inserting the exact known-good
+/// lines `arcis init` itself scaffolds (commented out there) if either is
+/// missing. A narrow, line-based text transform — not a general TOML
+/// editor — deliberately, since the only two lines ever inserted are fixed,
+/// already-tested strings; see this module's design notes for why a
+/// TOML-parsing dependency wasn't added for this.
+fn ensure_json_deps(contents: &str) -> String {
+    let has_active_dep = |dep: &str| {
+        contents.lines().any(|l| {
+            let t = l.trim_start();
+            !t.starts_with('#') && (t.starts_with(&format!("{dep} ")) || t.starts_with(&format!("{dep}=")))
+        })
+    };
+    let mut needed = String::new();
+    if !has_active_dep("serde") {
+        needed.push_str("serde = { version = \"1\", features = [\"derive\"] }\n");
+    }
+    if !has_active_dep("serde_json") {
+        needed.push_str("serde_json = \"1\"\n");
+    }
+    if needed.is_empty() {
+        return contents.to_string();
+    }
+    // Find an ACTIVE `[dependencies]` table header — a commented-out one
+    // (`# [dependencies]`, as `arcis init`'s own template scaffolds) must
+    // not be treated as a real table, or the injected lines would land
+    // with no active header above them.
+    let active_header = contents.lines().find_map(|l| {
+        if l.trim() == "[dependencies]" {
+            Some(l)
+        } else {
+            None
+        }
+    });
+    match active_header.and_then(|header_line| contents.find(header_line)) {
+        Some(pos) => {
+            let insert_at = contents[pos..].find('\n').map_or(contents.len(), |i| pos + i + 1);
+            let mut out = String::with_capacity(contents.len() + needed.len());
+            out.push_str(&contents[..insert_at]);
+            out.push_str(&needed);
+            out.push_str(&contents[insert_at..]);
+            out
+        }
+        None => {
+            let mut out = contents.to_string();
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("\n[dependencies]\n");
+            out.push_str(&needed);
+            out
+        }
+    }
+}
+
+#[cfg(test)]
+mod json_deps_tests {
+    use super::ensure_json_deps;
+
+    #[test]
+    fn adds_both_deps_to_a_fresh_arcis_init_template() {
+        let input = "[package]\nname = \"x\"\n\n# [dependencies]\n# serde = { version = \"1\", features = [\"derive\"] }\n# serde_json = \"1\"\n";
+        let out = ensure_json_deps(input);
+        assert!(out.contains("\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n"));
+    }
+
+    #[test]
+    fn inserts_after_an_existing_dependencies_table_without_disturbing_other_entries() {
+        let input = "[package]\nname = \"x\"\n\n[dependencies]\ntempfile = \"3\"\n";
+        let out = ensure_json_deps(input);
+        assert!(out.contains("[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\ntempfile = \"3\"\n"));
+    }
+
+    #[test]
+    fn leaves_contents_unchanged_when_both_deps_already_active() {
+        let input = "[package]\nname = \"x\"\n\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n";
+        assert_eq!(ensure_json_deps(input), input);
+    }
+
+    #[test]
+    fn appends_a_fresh_dependencies_table_when_none_exists() {
+        let input = "[package]\nname = \"x\"\n";
+        let out = ensure_json_deps(input);
+        assert!(out.ends_with("\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n"));
+    }
+
+    #[test]
+    fn only_adds_the_missing_one_when_one_dep_is_already_active() {
+        let input = "[package]\nname = \"x\"\n\n[dependencies]\nserde_json = \"1\"\n";
+        let out = ensure_json_deps(input);
+        assert!(out.contains("[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n"));
+    }
 }

@@ -235,6 +235,117 @@ fn build_emits_arcis_generated_rs_files() {
     assert!(rs.exists(), "build must leave bin/main.rs on disk");
 }
 
+#[test]
+fn build_defaults_to_the_rust_backend() {
+    // No `--backend` flag: the default flipped from `cranelift` to `rust`
+    // once generics landed (Cranelift doesn't support them). Confirmed by
+    // checking for the Rust backend's `bin/main.rs` artifact — the
+    // Cranelift backend never writes one.
+    let s = Scratch::new();
+    let main = s.write("main.tsr", "print(\"default backend\");\n");
+    let status = s.cmd().args(["build", main.to_str().unwrap()]).status().expect("spawn arcis");
+    assert!(status.success());
+    let rs = s.dir.join("bin").join("main.rs");
+    assert!(rs.exists(), "default backend must be `rust`, which leaves bin/main.rs on disk");
+}
+
+#[test]
+fn generic_function_builds_and_runs_on_the_default_backend() {
+    let s = Scratch::new();
+    let main = s.write(
+        "main.tsr",
+        "function identity<T>(x: T): T { return x; }\nprint(\"identity(5) = \" + identity(5));\n",
+    );
+    let out = s.cmd().args(["run", main.to_str().unwrap()]).output().expect("spawn arcis");
+    assert!(
+        out.status.success(),
+        "a generic function must build and run on the default (Rust) backend; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("identity(5) = 5"), "got stdout:\n{stdout}");
+}
+
+#[test]
+fn generic_function_is_rejected_cleanly_on_the_cranelift_backend() {
+    let s = Scratch::new();
+    let main = s.write(
+        "main.tsr",
+        "function identity<T>(x: T): T { return x; }\nprint(identity(5));\n",
+    );
+    let out = s
+        .cmd()
+        .args(["build", "--backend", "cranelift", main.to_str().unwrap()])
+        .output()
+        .expect("spawn arcis");
+    assert!(!out.status.success(), "Cranelift must reject a generic function, not silently miscompile it");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("generic") && stderr.contains("--backend rust"),
+        "expected a clear generics-not-supported error pointing at --backend rust, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn json_call_builds_and_runs_on_the_default_backend() {
+    let s = Scratch::new();
+    s.write("Cargo.toml", "[package]\nname = \"jsontest\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    s.write("data.json", "{ \"name\": \"arcis\", \"count\": 2 }\n");
+    let main = s.write(
+        "main.tsr",
+        "let data = json(\"./data.json\");\nprint(\"name: \" + data.name);\nprint(\"count: \" + data.count);\n",
+    );
+    let out = s.cmd().args(["run", main.to_str().unwrap()]).output().expect("spawn arcis");
+    assert!(
+        out.status.success(),
+        "json(...) must build and run on the default (Rust) backend; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("name: arcis") && stdout.contains("count: 2"), "got stdout:\n{stdout}");
+
+    // The Cargo.toml must have gotten serde/serde_json auto-injected —
+    // this is the "feels native, no manual dependency wiring" guarantee.
+    let cargo_dir = s.dir.join("bin").join(s.dir.file_name().unwrap());
+    let generated_cargo = fs::read_to_string(cargo_dir.join("Cargo.toml")).expect("read generated Cargo.toml");
+    assert!(generated_cargo.contains("serde_json"), "expected serde_json to be auto-injected, got:\n{generated_cargo}");
+}
+
+#[test]
+fn json_call_is_rejected_cleanly_on_the_cranelift_backend() {
+    let s = Scratch::new();
+    s.write("data.json", "{ \"name\": \"arcis\" }\n");
+    let main = s.write("main.tsr", "let data = json(\"./data.json\");\nprint(data.name);\n");
+    let out = s
+        .cmd()
+        .args(["build", "--backend", "cranelift", main.to_str().unwrap()])
+        .output()
+        .expect("spawn arcis");
+    assert!(!out.status.success(), "Cranelift must reject json(...), not silently miscompile it");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("json") && stderr.contains("--backend rust"),
+        "expected a clear json-not-supported error pointing at --backend rust, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn json_call_with_bad_path_is_a_clean_compile_error_not_a_panic() {
+    let s = Scratch::new();
+    s.write("Cargo.toml", "[package]\nname = \"jsontest\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    let main = s.write(
+        "main.tsr",
+        "let data = json(\"./does-not-exist.json\");\nprint(data.name);\n",
+    );
+    let out = s.cmd().args(["build", main.to_str().unwrap()]).output().expect("spawn arcis");
+    assert!(!out.status.success(), "a missing json file must be a clean error, not a successful build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("json") && !stderr.contains("panicked"),
+        "expected a clean json error (not a panic), got:\n{stderr}"
+    );
+}
+
 // ─── run ──────────────────────────────────────────────────────────────────
 
 #[test]

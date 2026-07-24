@@ -1,0 +1,38 @@
+// main.tsr — native JSON: `json(path)` with compile-time type inference.
+//
+// Rust backend only: the runtime deserialization leans on `serde`/
+// `serde_json` (auto-added to Cargo.toml the first time a program uses
+// `json(...)`), the same way generics lean on real Rust generics. Building
+// this with `--backend cranelift` fails with a clear error instead of
+// silently miscompiling.
+
+// ============================================================
+// 1. Literal path — the compiler reads data.json AT COMPILE TIME and
+//    infers its real shape (nested objects, arrays, primitives), the same
+//    way `let o = { a: 1 };` infers `o`'s type from a literal today. No
+//    interface written by hand, full field-access type checking, and real
+//    editor autocomplete after `data.` — all "for free".
+// ============================================================
+let data = json("./data.json");
+print("name: " + data.name);
+print("version: " + data.version);
+print("active: " + data.active);
+print("first tag: " + data.tags[0]);
+print("meta.id: " + data.meta.id);
+print("meta.maintainer: " + data.meta.maintainer);
+
+// ============================================================
+// 2. Non-literal path — the compiler can't read a file whose path is only
+//    known at runtime, so an explicit type argument is required, naming an
+//    already-declared interface. This is also the shape a caller needs
+//    whenever the JSON's real shape isn't available as a sample file at
+//    compile time.
+// ============================================================
+interface Item {
+    name: string;
+    version: number;
+}
+let dataPath: string = "./data.json";
+let item = json<Item>(dataPath);
+print("item.name: " + item.name);
+print("item.version: " + item.version);

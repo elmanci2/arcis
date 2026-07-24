@@ -83,6 +83,32 @@ pub(crate) fn run(input: &Path, backend: super::Backend) -> Result<super::BuildO
         ));
     }
 
+    // General type-mismatch check: once a binding's type is established
+    // (annotation or inference), assigning/returning/storing an
+    // incompatible value is a compile error — on both backends,
+    // identically. Without this, an incompatible reassignment either
+    // produces a confusing `rustc` error (Rust backend) or crashes the
+    // Cranelift backend outright with a raw verifier panic.
+    let mut type_issues = Vec::new();
+    for m in &modules {
+        for issue in arcis_validation::check_types(&m.program, &env) {
+            type_issues.push(format!(
+                "{}:{}:{}: {}",
+                m.path.display(),
+                issue.line,
+                issue.col,
+                issue.message
+            ));
+        }
+    }
+    if !type_issues.is_empty() {
+        return Err(format!(
+            "type error{}:\n{}",
+            if type_issues.len() == 1 { "" } else { "s" },
+            type_issues.join("\n")
+        ));
+    }
+
     let bin_dir = PathBuf::from("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("could not create `bin/`: {}", e))?;
     let root_id = modules[0].id.clone();

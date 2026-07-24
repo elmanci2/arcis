@@ -8,16 +8,19 @@
 //! 3. `arcis_validation::validate` — unused variables (warning),
 //!    duplicate declarations and `break`/`continue` outside a loop
 //!    (errors), each anchored at its declaration's line/col.
-//! 4. Type inference + null-safety — same guarantee the compiler enforces
-//!    (every `T?` must be resolved with `?? fallback`, a null check, or
-//!    `!` before reaching a place that expects a `T`), surfaced live in the
-//!    editor rather than only at `arcis build`. Single-document only (the
-//!    LSP doesn't resolve cross-file imports), so a name defined in
-//!    another module of the same project won't be seen here — that still
-//!    gets a definitive answer at build time.
+//! 4. Type inference + null-safety + general type-mismatch checking —
+//!    the same guarantees the compiler enforces (every `T?` must be
+//!    resolved with `?? fallback`, a null check, or `!` before reaching a
+//!    place that expects a `T`; a binding's type, once established,
+//!    can't accept an incompatible value on reassignment/return/field
+//!    store), surfaced live in the editor rather than only at
+//!    `arcis build`. Single-document only (the LSP doesn't resolve
+//!    cross-file imports), so a name defined in another module of the
+//!    same project won't be seen here — that still gets a definitive
+//!    answer at build time.
 
 use arcis_parser::ParseError;
-use arcis_validation::{NullSafetyIssue, ValidationIssue};
+use arcis_validation::{NullSafetyIssue, TypeMismatchIssue, ValidationIssue};
 use crate::lsp::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 /// Run the diagnostic pipeline against `text` and return every
@@ -60,6 +63,11 @@ pub fn diagnostics_for(text: &str) -> Vec<Diagnostic> {
         arcis_validation::check_null_safety(&program, &env)
             .into_iter()
             .map(from_null_safety),
+    );
+    out.extend(
+        arcis_validation::check_types(&program, &env)
+            .into_iter()
+            .map(from_type_mismatch),
     );
 
     out
@@ -118,6 +126,24 @@ fn from_null_safety(issue: NullSafetyIssue) -> Diagnostic {
     // back to `(0, 0)` (top of file) when nothing more precise is known —
     // still surfaces the issue with its self-descriptive message, just
     // without a tight underline.
+    let line = issue.line.saturating_sub(1) as u32;
+    let character = issue.col.saturating_sub(1) as u32;
+    Diagnostic {
+        range: Range {
+            start: Position { line, character },
+            end: Position {
+                line,
+                character: character.saturating_add(1),
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("arcis-lsp".into()),
+        message: issue.message,
+        ..Default::default()
+    }
+}
+
+fn from_type_mismatch(issue: TypeMismatchIssue) -> Diagnostic {
     let line = issue.line.saturating_sub(1) as u32;
     let character = issue.col.saturating_sub(1) as u32;
     Diagnostic {

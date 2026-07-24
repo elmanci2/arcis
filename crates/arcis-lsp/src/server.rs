@@ -110,7 +110,7 @@ pub fn build(client: ClientSocket) -> Router<ServerState> {
             let full_text = state.docs.get(&uri).unwrap_or_default();
             let prefix = prefix_up_to(full_text, pos);
             let items: Vec<CompletionItem> =
-                completions_at(&prefix, full_text);
+                completions_at(&prefix, full_text, Some(&uri));
             async move {
                 Ok(Some(CompletionResponse::List(CompletionList {
                     is_incomplete: false,

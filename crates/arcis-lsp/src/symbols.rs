@@ -14,6 +14,8 @@
 //! list. Good enough for "what can I complete / jump to here", not a
 //! real scope resolver.
 
+use std::collections::HashMap;
+
 use arcis_ast::{
     ArrayElement, ArrowBody, ExportDefault, Expr, Function, ObjectField, Program, Stmt, Type,
 };
@@ -95,6 +97,15 @@ pub struct Symbol {
     /// point to* still requires walking `Stmt::ExportSpec` directly to
     /// recover the original local name.
     pub exported: bool,
+    /// The binding's declared or inferred type — `None` for kinds where a
+    /// type isn't meaningful (functions, modules, type-level
+    /// declarations). Lets `completion`'s member-access dispatch
+    /// (`ident.<TAB>`) offer the RIGHT members (object fields, array
+    /// methods, string methods, or nothing for a `number`/`boolean`)
+    /// instead of always guessing array/string methods. A bare
+    /// `Type::Named(name)` (an unresolved interface/alias reference) is
+    /// looked up in [`collect_named_shapes`] to reach the actual fields.
+    pub ty: Option<Type>,
 }
 
 /// Parse `program` and collect every symbol declared anywhere in it.
@@ -104,6 +115,126 @@ pub fn collect_symbols(program: &Program) -> Vec<Symbol> {
         collect_stmt(stmt, &mut out);
     }
     out
+}
+
+/// Resolve every top-level `interface`/`type` declaration in `program` to
+/// its field list, keyed by name — so member completion on `let p: Person`
+/// can look up `Person`'s actual fields even though the variable's own
+/// `Symbol::ty` is just the unresolved `Type::Named("Person")`.
+///
+/// Single-document only (no cross-module linking, matching the rest of
+/// this LSP): `interface Base` referenced via `extends` or `type X = Y`
+/// only resolves if `Base`/`Y` is declared in the SAME file. This mirrors,
+/// at a much smaller scope, what `arcis_codegen::collect_interfaces` /
+/// `resolve_type_aliases` do for the compiler.
+pub fn collect_named_shapes(program: &Program) -> HashMap<String, Vec<(String, Type, bool)>> {
+    // Raw pass: interface name -> (extends bases, own fields); alias name
+    // -> aliased type (only kept if it's itself Named/Object, chains
+    // resolved below).
+    let mut interfaces: HashMap<String, (Vec<String>, Vec<(String, Type, bool)>)> = HashMap::new();
+    let mut aliases: HashMap<String, Type> = HashMap::new();
+    for stmt in &program.stmts {
+        let inner = match stmt {
+            Stmt::ExportDecl(inner) => inner.as_ref(),
+            other => other,
+        };
+        match inner {
+            Stmt::Interface { name, extends, fields, .. } => {
+                let owned: Vec<(String, Type, bool)> = fields
+                    .iter()
+                    .map(|(n, t, opt)| (n.clone(), (**t).clone(), *opt))
+                    .collect();
+                interfaces.insert(name.clone(), (extends.clone(), owned));
+            }
+            Stmt::TypeAlias { name, ty, .. } => {
+                aliases.insert(name.clone(), ty.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let mut resolved: HashMap<String, Vec<(String, Type, bool)>> = HashMap::new();
+    let names: Vec<String> = interfaces.keys().cloned().collect();
+    for name in names {
+        let mut visiting = std::collections::HashSet::new();
+        resolve_interface(&name, &interfaces, &mut resolved, &mut visiting);
+    }
+    // `type X = { ... }` (inline object alias) or `type X = Y` (alias to
+    // another named shape, resolved transitively).
+    for (name, ty) in &aliases {
+        if resolved.contains_key(name) {
+            continue;
+        }
+        let mut visiting = std::collections::HashSet::new();
+        if let Some(fields) = resolve_alias_shape(ty, &interfaces, &aliases, &mut resolved, &mut visiting) {
+            resolved.insert(name.clone(), fields);
+        }
+    }
+    resolved
+}
+
+fn resolve_interface(
+    name: &str,
+    raw: &HashMap<String, (Vec<String>, Vec<(String, Type, bool)>)>,
+    resolved: &mut HashMap<String, Vec<(String, Type, bool)>>,
+    visiting: &mut std::collections::HashSet<String>,
+) -> Vec<(String, Type, bool)> {
+    if let Some(fields) = resolved.get(name) {
+        return fields.clone();
+    }
+    let Some((extends, own)) = raw.get(name) else {
+        return Vec::new();
+    };
+    if !visiting.insert(name.to_string()) {
+        return own.clone(); // extends cycle: stop recursing
+    }
+    let mut merged = Vec::new();
+    for base in extends {
+        for f in resolve_interface(base, raw, resolved, visiting) {
+            merged.retain(|(fname, _, _)| fname != &f.0);
+            merged.push(f);
+        }
+    }
+    for f in own {
+        merged.retain(|(fname, _, _)| fname != &f.0);
+        merged.push(f.clone());
+    }
+    visiting.remove(name);
+    resolved.insert(name.to_string(), merged.clone());
+    merged
+}
+
+fn resolve_alias_shape(
+    ty: &Type,
+    interfaces: &HashMap<String, (Vec<String>, Vec<(String, Type, bool)>)>,
+    aliases: &HashMap<String, Type>,
+    resolved: &mut HashMap<String, Vec<(String, Type, bool)>>,
+    visiting: &mut std::collections::HashSet<String>,
+) -> Option<Vec<(String, Type, bool)>> {
+    match ty {
+        Type::Object { fields, .. } => Some(
+            fields
+                .iter()
+                .map(|(n, t, opt)| (n.clone(), (**t).clone(), *opt))
+                .collect(),
+        ),
+        Type::Named(n) => {
+            if let Some(fields) = resolved.get(n) {
+                return Some(fields.clone());
+            }
+            if interfaces.contains_key(n) {
+                return Some(resolve_interface(n, interfaces, resolved, visiting));
+            }
+            let target = aliases.get(n)?;
+            if !visiting.insert(n.clone()) {
+                return None; // alias cycle
+            }
+            let fields = resolve_alias_shape(target, interfaces, aliases, resolved, visiting)?;
+            visiting.remove(n);
+            Some(fields)
+        }
+        _ => None,
+    }
 }
 
 /// Lex + parse + run type inference over `text`. The returned program has
@@ -152,7 +283,21 @@ fn infer(program: &mut Program) {
 }
 
 fn push(out: &mut Vec<Symbol>, name: String, kind: SymbolKind, line: usize, col: usize, detail: String) {
-    push_ex(out, name, kind, line, col, detail, false);
+    push_ty(out, name, kind, line, col, detail, None);
+}
+
+/// Like [`push`] but also records the binding's type (for member-access
+/// completion — see [`Symbol::ty`]).
+fn push_ty(
+    out: &mut Vec<Symbol>,
+    name: String,
+    kind: SymbolKind,
+    line: usize,
+    col: usize,
+    detail: String,
+    ty: Option<Type>,
+) {
+    push_full(out, name, kind, line, col, detail, false, ty);
 }
 
 fn push_ex(
@@ -164,6 +309,20 @@ fn push_ex(
     detail: String,
     exported: bool,
 ) {
+    push_full(out, name, kind, line, col, detail, exported, None);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_full(
+    out: &mut Vec<Symbol>,
+    name: String,
+    kind: SymbolKind,
+    line: usize,
+    col: usize,
+    detail: String,
+    exported: bool,
+    ty: Option<Type>,
+) {
     out.push(Symbol {
         name,
         kind,
@@ -173,6 +332,7 @@ fn push_ex(
         import: None,
         enum_variants: Vec::new(),
         exported,
+        ty,
     });
 }
 
@@ -180,11 +340,11 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
     match stmt {
         // ── let / const ────────────────────────────────────────────
         Stmt::Let { name, ty, value, line, col } => {
-            push(out, name.clone(), SymbolKind::Variable, *line, *col, describe_binding(ty));
+            push_ty(out, name.clone(), SymbolKind::Variable, *line, *col, describe_binding(ty), ty.clone());
             collect_expr(value, out);
         }
         Stmt::Const { name, ty, value, line, col } => {
-            push(out, name.clone(), SymbolKind::Constant, *line, *col, describe_binding(ty));
+            push_ty(out, name.clone(), SymbolKind::Constant, *line, *col, describe_binding(ty), ty.clone());
             collect_expr(value, out);
         }
 
@@ -194,7 +354,7 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
         // ── for-of ────────────────────────────────────────────────
         Stmt::ForOf { name, ty, iterable, body } => {
             let detail = ty.as_ref().map(type_label).unwrap_or_else(|| "any".to_string());
-            push(out, name.clone(), SymbolKind::LoopVar, 0, 0, detail);
+            push_ty(out, name.clone(), SymbolKind::LoopVar, 0, 0, detail, ty.clone());
             collect_expr(iterable, out);
             for s in body {
                 collect_stmt(s, out);
@@ -213,6 +373,7 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
                 import: Some((module.clone(), None)),
                 enum_variants: Vec::new(),
                 exported: false,
+                ty: None,
             });
         }
         Stmt::FromImport { module, names, wildcard: false } => {
@@ -227,6 +388,7 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
                     import: Some((module.clone(), Some(n.name.clone()))),
                     enum_variants: Vec::new(),
                     exported: false,
+                    ty: None,
                 });
             }
         }
@@ -341,6 +503,7 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
                 import: None,
                 enum_variants: resolved,
                 exported: false,
+                ty: None,
             });
         }
     }
@@ -358,7 +521,7 @@ fn collect_function(f: &Function, out: &mut Vec<Symbol>, export_tag: Option<&str
     };
     push_ex(out, name, SymbolKind::Function, f.line, f.col, detail, export_tag.is_some());
     for p in &f.params {
-        push(out, p.name.clone(), SymbolKind::Parameter, p.line, p.col, type_label(&p.ty));
+        push_ty(out, p.name.clone(), SymbolKind::Parameter, p.line, p.col, type_label(&p.ty), Some(p.ty.clone()));
     }
     for s in &f.body {
         collect_stmt(s, out);
@@ -371,11 +534,11 @@ fn collect_function(f: &Function, out: &mut Vec<Symbol>, export_tag: Option<&str
 fn collect_export_decl(inner: &Stmt, out: &mut Vec<Symbol>) {
     match inner {
         Stmt::Let { name, ty, value, line, col } => {
-            push_ex(out, name.clone(), SymbolKind::Variable, *line, *col, format!("{} (exported)", describe_binding(ty)), true);
+            push_full(out, name.clone(), SymbolKind::Variable, *line, *col, format!("{} (exported)", describe_binding(ty)), true, ty.clone());
             collect_expr(value, out);
         }
         Stmt::Const { name, ty, value, line, col } => {
-            push_ex(out, name.clone(), SymbolKind::Constant, *line, *col, format!("{} (exported)", describe_binding(ty)), true);
+            push_full(out, name.clone(), SymbolKind::Constant, *line, *col, format!("{} (exported)", describe_binding(ty)), true, ty.clone());
             collect_expr(value, out);
         }
         Stmt::Function(f) => collect_function(f, out, Some("exported")),
@@ -400,6 +563,7 @@ fn collect_export_decl(inner: &Stmt, out: &mut Vec<Symbol>) {
                 import: None,
                 enum_variants: resolved,
                 exported: true,
+                ty: None,
             });
         }
         _ => {}
@@ -414,7 +578,7 @@ fn collect_expr(expr: &Expr, out: &mut Vec<Symbol>) {
     match expr {
         Expr::Arrow { params, return_type: _, body } => {
             for p in params {
-                push(out, p.name.clone(), SymbolKind::Parameter, p.line, p.col, type_label(&p.ty));
+                push_ty(out, p.name.clone(), SymbolKind::Parameter, p.line, p.col, type_label(&p.ty), Some(p.ty.clone()));
             }
             match body {
                 ArrowBody::Expr(e) => collect_expr(e, out),

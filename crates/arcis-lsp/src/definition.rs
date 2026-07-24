@@ -343,7 +343,7 @@ fn collect_function_defs(f: &Function, defs: &mut Vec<DefInfo>) {
 
 /// Given a `file://` URI and a module path like `["mate"]` or
 /// `["os", "path"]`, return the filesystem path to the `.tsr` file.
-fn module_file_path(current_uri: &Url, module: &[String]) -> Option<PathBuf> {
+pub(crate) fn module_file_path(current_uri: &Url, module: &[String]) -> Option<PathBuf> {
     if current_uri.scheme() != "file" {
         return None;
     }
